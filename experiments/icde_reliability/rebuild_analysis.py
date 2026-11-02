@@ -16,12 +16,14 @@ parser.add_argument('--training-runs',type=Path,help='Complete training-fitted D
 parser.add_argument('--primary-only',action='store_true',help='Skip the original native traffic-training audit')
 args=parser.parse_args();workspace=args.workspace.resolve();local=workspace/'experiments/icde_reliability/results'
 records=args.records.resolve() if args.records else (workspace/'reference_records' if (workspace/'reference_records').exists() else local)
-manifest=args.manifest or workspace/'experiments/source_filtered_reproduction/results/manifest.json'
+current_manifest=workspace/'experiments/icde_reliability/current_manifest.json'
+manifest=args.manifest or (current_manifest if current_manifest.exists() else workspace/'experiments/source_filtered_reproduction/results/manifest.json')
 training=args.training_runs or (workspace/'payload/home/wyj/source_filtered_reproduction/runs' if (workspace/'payload').exists() else workspace/'experiments/source_filtered_reproduction/results/runs')
 summary=local if records==local else workspace/'analysis_summaries';paper=workspace/'ICDE'
 if (records/'deepstuq_backbone/manifest.json').exists():
     from merge_deepstuq_records import prepare_records
-    records, manifest, training = prepare_records(records,manifest,training,workspace/'seven_backbone_records')
+    view = 'seven_backbone_records_h192' if (records/'nsdiff_h192/manifest.json').exists() else 'seven_backbone_records'
+    records, manifest, training = prepare_records(records,manifest,training,workspace/view)
 expected_tasks=len(json.loads(manifest.read_text()))
 if expected_tasks != 249:
     raise ValueError('The current manuscript requires all249 tasks from seven backbones')
@@ -86,6 +88,11 @@ else:
 execute('render_tables.py',arguments)
 configuration_wins()
 execute('render_eab_controls.py',['--results',summary,'--output',paper/'tables'])
+if (records/'granularity/manifest.json').exists():
+    execute('aggregate_granularity.py',['--results',records/'granularity','--output',summary/'granularity/summary'])
+    require(summary/'granularity/summary',expected_tasks)
+    execute('render_granularity.py',['--results',summary/'granularity/summary',
+        '--primary',summary/'summary','--output',paper/'tables/granularity.tex'])
 environment=dict(os.environ,ICDE_ANALYSIS_RESULTS=str(records))
 subprocess.run([sys.executable,str(paper/'scripts/plot_eab_evidence.py')],env=environment,check=True,stdout=subprocess.DEVNULL)
 print('Rebuilt seven-backbone numerical tables and both quantitative figures. Native traffic-training audit included:',not args.primary_only)

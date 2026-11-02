@@ -5,6 +5,7 @@ Code, data, configurations and experiment records for **Forecast-State Miscalibr
 ## Experiments
 
 - Seven backbones,83 dataset–horizon configurations,and three training seeds:249 training runs.
+- NsDiff ETTm1,ETTm2 and ExchangeRate use192 forecast steps,with nine freshly trained tasks replacing the historical24-step records.
 - Empirical residual calibration,global/conditional PIT,and two-/four-parameter Gaussian corrections on paired complete native validation/test forecasts.
 - Source-validity,budget,state-assignment,and exact template-compilation controls.
 - DeepSTUQ (**ICDE2023**) is the seventh backbone on PEMS03/04/07/08. Its twelve native training replications receive the same primary corrections,Gaussian controls,training DC16/DC64 comparison,budget and source-validity ablations,state-assignment controls,and compilation benchmarks as the other six backbones.
@@ -13,7 +14,7 @@ Backbone summaries first average configurations within each seed,then compute sa
 
 ## Download
 
-Download the code and records from [v1.1.0](https://github.com/wangyijunlyy/forecast-state-miscalibration/releases/tag/v1.1.0). The unchanged dataset parts are available in [v1.0.0](https://github.com/wangyijunlyy/forecast-state-miscalibration/releases/tag/v1.0.0):
+Download the code and records from [v1.2.0](https://github.com/wangyijunlyy/forecast-state-miscalibration/releases/tag/v1.2.0). The unchanged dataset parts are available in [v1.0.0](https://github.com/wangyijunlyy/forecast-state-miscalibration/releases/tag/v1.0.0):
 
 | Files | Contents |
 |---|---|
@@ -36,7 +37,7 @@ python experiments/icde_reliability/rebuild_analysis.py --workspace "$PWD"
 python experiments/icde_reliability/audit_table_sd.py --results analysis_summaries --paper ICDE
 ```
 
-These commands audit the recorded suites and regenerate the shared seven-backbone result tables and two quantitative figures. The SD auditor independently verifies all469 mean/SD cells against raw three-seed scores. No GPU,dataset download or neural model weights are needed for this analysis.
+These commands audit the recorded suites and regenerate the shared seven-backbone result tables and two quantitative figures. The SD auditor independently verifies all525 mean/SD cells against raw three-seed scores. No GPU,dataset download or neural model weights are needed for this analysis.
 
 ## Train and evaluate native models
 
@@ -60,3 +61,5 @@ Traffic scores retain native flow units;the other six backbones use model-normal
 ## Attribution
 
 Public upstream bases plus measured patches reconstruct the native model sources. Source identities,available licenses,and modifications are preserved in package provenance. Upstream repositories and datasets retain their original terms;this repository does not relicense them. The manuscript PDF and author metadata are separate from this artifact release.
+
+The current granularity study contains8217 partition/budget fits on the corrected249 tasks. The nine numeric tables include the separate temporal-fitting comparison; sample SD appears as a right subscript with three decimals. The finite-validation and equivalent attention precision policies are documented in [the NsDiff protocol](docs/NSDIFF_H192_PROTOCOL.md).

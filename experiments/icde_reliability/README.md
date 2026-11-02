@@ -70,3 +70,7 @@ The author DeepSTUQ repository is fetched at the revision specified in `DEEPSTUQ
 ## Seventh-backbone integration
 
 DeepSTUQ uses all four original PeMS datasets and three training seeds. `deepstuq_backbone.py` reuses each full native checkpoint and evaluates every common calibration/control family. `rebuild_analysis.py` combines its twelve tasks with the237 long-horizon tasks, independently audits all249 records per suite, and renders shared seven-backbone tables. `audit_deepstuq_backbone.py` additionally checks complete native training, original-output parity, full traversal, fitting identities and source counts. Traffic-flow scores retain native units; long-horizon scores retain their native model-normalized units.
+
+## Corrected NsDiff horizons
+
+`current_manifest.json` selects the current long-horizon tasks. NsDiff ETTm1,ETTm2 and ExchangeRate use192 forecast steps and replace the nine historical24-step training-seed identities. `NSDIFF_H192_PROTOCOL.md` records the unchanged native hyperparameters and complete recalculation. `run_nsdiff_h192.py` evaluates the same correction/control families from newly trained checkpoints; `audit_nsdiff_h192.py` checks actual output/fitting horizons and paired native metric accumulation. `rebuild_analysis.py` selects these nine replacements before combining all seven backbones,keeping249 tasks and83 configurations.

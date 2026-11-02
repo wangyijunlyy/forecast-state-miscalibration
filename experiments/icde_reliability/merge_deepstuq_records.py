@@ -20,8 +20,21 @@ def prepare_records(records, manifest, training, output):
     extra = json.loads((extension/'manifest.json').read_text())
     if len(tasks) != 237 or len(extra) != 12:
         raise ValueError('Expected the original237 tasks and all12 DeepSTUQ tasks')
+    correction = records/'nsdiff_h192'
+    corrected = {}
+    if (correction/'manifest.json').exists():
+        corrected = {t['id']: t for t in json.loads((correction/'manifest.json').read_text())}
+        selected = {t['id']: t for t in tasks}
+        if len(corrected) != 9 or not set(corrected) <= set(selected):
+            raise ValueError('The corrected NsDiff manifest must replace exactly nine selected tasks')
+        for identity, task in corrected.items():
+            if selected[identity] != task or task['horizon'] != 192:
+                raise ValueError('Corrected NsDiff task identity/configuration mismatch')
     output.mkdir(parents=True, exist_ok=True)
-    for source_root, task_list, is_extra in [(records, tasks, False), (extension, extra, True)]:
+    groups = [(records, [t for t in tasks if t['id'] not in corrected], False),
+              (correction, [t for t in tasks if t['id'] in corrected], False),
+              (extension, extra, True)]
+    for source_root, task_list, is_extra in groups:
         gaussian = source_root/('gaussian/runs' if (source_root/'gaussian/runs').exists() else 'gaussian_runs')
         compiled = source_root/('compiled_deployment/runs' if (source_root/'compiled_deployment/runs').exists() else 'compiled/runs')
         for task in task_list:
@@ -41,10 +54,19 @@ def prepare_records(records, manifest, training, output):
                     test_windows=comparison['test_windows'],test_batches=comparison['test_batches'],
                     common_normalized=normalized),indent=2)+'\n')
             else:
-                link(training/identity, destination)
+                source_training = correction/'train_calibration/runs' if identity in corrected else training
+                link(source_training/identity, destination)
     link(records/'deepstuq', output/'deepstuq')
     combined = tasks+extra
     if len({t['id'] for t in combined}) != 249:
         raise ValueError('Duplicate backbone task identity')
     (output/'manifest.json').write_text(json.dumps(combined,indent=2)+'\n')
+    if (records/'granularity/manifest.json').exists():
+        granularity = output/'granularity'
+        for task in combined:
+            source = correction/'granularity' if task['id'] in corrected else records/'granularity'
+            if not (source/'runs'/task['id']/'results.json').exists():
+                raise ValueError('Incomplete current granularity input: '+task['id'])
+            link(source/'runs'/task['id'], granularity/'runs'/task['id'])
+        (granularity/'manifest.json').write_text(json.dumps(combined,indent=2)+'\n')
     return output, output/'manifest.json', output/'training_runs'

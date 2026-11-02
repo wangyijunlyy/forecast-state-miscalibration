@@ -68,8 +68,21 @@ def main():
         return
     task_dir = root/'replay_tasks'; task_dir.mkdir(exist_ok=True)
     task_file = task_dir/(task['id']+'.json'); task_file.write_text(json.dumps(task, indent=2)+'\n')
+    corrected_nsdiff = task['backbone'] == 'NsDiff' and task.get('replaces_task', '').startswith('NsDiff_')
     if args.stage in ['all', 'train']:
-        subprocess.run([sys.executable, str(home/'three_seed_reproduction_20261031/code/train_task.py'), '--task', str(task_file)], check=True)
+        trainer = root/'code/train_nsdiff_h192.py' if corrected_nsdiff else home/'three_seed_reproduction_20261031/code/train_task.py'
+        subprocess.run([sys.executable, str(trainer), '--task', str(task_file)], check=True)
+    if corrected_nsdiff and args.stage in ['all', 'fit', 'quality']:
+        corrected_root = root/'retrained_nsdiff_h192'
+        corrected_root.mkdir(parents=True, exist_ok=True)
+        if args.stage == 'fit':
+            import run_nsdiff_h192 as corrected
+            interface = corrected.primary.prepare(task, corrected_root)
+            corrected.fit_training(task, corrected_root, interface)
+        else:
+            subprocess.run([sys.executable, str(root/'code/run_nsdiff_h192.py'),
+                '--task', str(task_file), '--root', str(corrected_root)], check=True)
+        return
     if args.stage in ['all', 'fit']:
         import run_task as evaluation
         from reservoir import CalibrationReservoir

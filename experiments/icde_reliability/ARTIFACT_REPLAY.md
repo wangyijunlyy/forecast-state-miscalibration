@@ -11,7 +11,7 @@ python experiments/icde_reliability/rebuild_analysis.py --workspace "$PWD"
 python experiments/icde_reliability/audit_table_sd.py --results analysis_summaries --paper ICDE
 ```
 
-This audits the saved experiment records,rebuilds the numerical tables and two figures,and independently checks all469 mean/SD cells against raw three-seed scores. It does not require datasets,a GPU or trained model parameters. Raw statistics retain full precision;manuscript tables use measured sample standard deviations to three decimal places.
+This audits the saved experiment records,rebuilds the numerical tables and two figures,and independently checks all525 mean/SD cells against raw three-seed scores. It does not require datasets,a GPU or trained model parameters. Raw statistics retain full precision;manuscript tables use measured sample standard deviations to three decimal places.
 
 ## Restore data and native sources
 
@@ -71,3 +71,11 @@ Repeat both steps for all four datasets and three seeds. This second command fit
 ## Reference records and new training runs
 
 The saved records document249 paired checkpoints:237 long-horizon tasks and twelve DeepSTUQ tasks. All seven backbones receive the same experiment families and appear in shared tables. Complete native replay with the original private checkpoints previously reproduced321 metric comparisons exactly;those checkpoints are not distributed in this release. Public reconstruction of the reported tables uses the saved records. New native forecast replications use locally trained checkpoints and should be compared with the recorded scores under the same seed-aware aggregation. Original supplied-checkpoint shortcuts require privately retained checkpoints. This public release uses the from-scratch route above.
+
+## NsDiff192-step tasks
+
+The current manifest replaces NsDiff ETTm1,ETTm2 and ExchangeRate24-step tasks with192-step tasks. Use identities such as `NsDiff_ETTm1_h192_seed1` with `from_scratch_eab.py`. Its corrected-task branch trains the original native networks and invokes `run_nsdiff_h192.py` for training DC16/DC64,all eight primary/Gaussian comparisons and all mechanism/compilation controls. Outputs are under `$ICDE_RUN_ROOT/retrained_nsdiff_h192`. Other native hyperparameters remain fixed; see `NSDIFF_H192_PROTOCOL.md`.
+
+The nine replacements are selected by `experiments/icde_reliability/current_manifest.json`. Historical24-step records remain archived but do not contribute to current249-task summaries.
+
+`train_nsdiff_h192.py` retains the native training architecture and optimizer,uses an equivalent attention float64 overflow fallback,and treats nonfinite validation candidates as non-improvement under the original patience10 rule. `NSDIFF_H192_PROTOCOL.md` documents the observed case. The granularity records contain8217 partition/budget fits on the corrected249 tasks. Table SD is shown as a right subscript to the mean,with three decimals and bold best unrounded means.

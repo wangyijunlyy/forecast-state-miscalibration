@@ -64,8 +64,8 @@ def diagnosis():
         r = by_model[backbone]; n = r['pooled_median_error_pp_n_configurations']
         table_rows.append(' & '.join([LABELS[backbone],str(n)]+[cell(r[k+'_mean'], r[k+'_std']) for k in keys])+r' \\')
     (PAPER/'tables/problem_diagnostics.tex').write_text(table(
-        'Native median-coverage diagnostics on complete validation iterators. Errors and ranges are percentage points. Each configuration has eligible states in all three seeds; both errors use identical states with at least 128 coordinates. Entries average configurations within seeds, then report mean $\\pm$ sample SD across seeds.',
-        'tab:diagnosis', ['Backbone','Configs','Pooled error','State error','State range'],table_rows,wide=True))
+        'Native median-coverage diagnostics on complete validation iterators. Errors and ranges are percentage points. Each configuration has eligible states in all three seeds; both errors use identical states with at least 128 coordinates. Subscripts give sample SD over three seed averages of configurations.',
+        'tab:diagnosis', ['Backbone','Configs',r'\shortstack{Pooled\\error $\downarrow$}',r'\shortstack{State\\error $\downarrow$}',r'\shortstack{State\\range $\downarrow$}'],table_rows,wide=False).replace(r'\tabcolsep}{4pt}',r'\tabcolsep}{2pt}'))
     fig, axes = plt.subplots(1, 2, figsize=(7.15,2.75), layout='constrained')
     cmap = LinearSegmentedColormap.from_list('coverage', [BLUE,'#FFFFFF',ORANGE])
     for i,(identity,ax) in enumerate(zip(examples,axes)):
