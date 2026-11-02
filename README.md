@@ -1,32 +1,31 @@
 # Forecast-State Miscalibration
 
-Reproducibility artifacts for **Forecast-State Miscalibration in Probabilistic Time-Series Analytics**.
+Code, data, configurations and experiment records for **Forecast-State Miscalibration in Probabilistic Time-Series Analytics**. Neural model weights are not distributed; the native training code creates checkpoints locally.
 
-This study examines probability errors within observable predictive mean–scale states, residual amplification caused by nearly collapsed fitting scales, temporal fitting effects, and probability-delivery cost. Calibration families are compared on paired native forecasts rather than independently sampled predictions.
+## Experiments
 
-## Experiment scope
+- Six long-horizon backbones,79 dataset–horizon configurations,and three training seeds:237 training runs.
+- Empirical residual calibration,global/conditional PIT,and two-/four-parameter Gaussian corrections on paired complete native validation/test forecasts.
+- Source-validity,budget,state-assignment,and exact template-compilation controls.
+- DeepSTUQ (**ICDE2023**) on PEMS03/04/07/08 with three training seeds:twelve full native training replications.
 
-- Six long-horizon backbones, 79 dataset–horizon configurations, and three training seeds:237 native checkpoints.
-- Empirical residual calibration,global/conditional PIT, and two-/four-parameter Gaussian calibration on complete native validation/test iterators.
-- Source-validity,budget, state-assignment, and exact template-compilation controls.
-- DeepSTUQ (**ICDE2023**) on PEMS03/04/07/08 with three training seeds:12 full native training replications.
+Backbone summaries first average configurations within each seed,then compute sample SD across three training seeds. Manuscript values use three decimal places;raw records retain full precision.
 
-Reported uncertainty is the sample standard deviation across three training seeds. Backbone summaries first average configurations within each seed. Manuscript values use three decimal places; raw records retain full precision.
+## Download
 
-## Download the complete artifacts
-
-The [v1.0.0 release](https://github.com/wangyijunlyy/forecast-state-miscalibration/releases/tag/v1.0.0) provides:
+The [v1.0.0 release](https://github.com/wangyijunlyy/forecast-state-miscalibration/releases/tag/v1.0.0) contains:
 
 | Files | Contents |
 |---|---|
-| `code-and-records.tar.gz` | Actual code/configurations, reference records, dependency locks, source-restoration patches,analysis scripts, and measured figure data |
-| `base-assets.tar.gz.part-000` through `part-153` | Native data,237 checkpoints, conditional predictors, shared initializations, and training-fitted residual states |
-| `traffic-assets.tar.gz` | Twelve fully trained DeepSTUQ models and associated model dependencies |
-| JSON manifests | Ordered filenames and exact byte sizes |
+| `code-and-records.tar.gz` | Code,configurations,reference records,source-restoration patches,dependency locks,analysis scripts,and measured figure data |
+| `data-only.tar.gz.part-000` through `part-009` | Original dataset files in the native loader layouts;no model checkpoints |
+| JSON manifests | File names,byte sizes and transfer-integrity records |
 
-### Rebuild tables and figures without a GPU
+The code archive is approximately34MB. The dataset archive is approximately639MB compressed. Model checkpoint files (`.pt`, `.pth`, `.ckpt`, `.safetensors`) are excluded from both archives.
 
-Using Python3.10–3.12, download and extract `code-and-records.tar.gz`, then run:
+## Rebuild tables and figures
+
+With Python3.10–3.12,download the code archive and run:
 
 ```sh
 mkdir artifact
@@ -37,28 +36,27 @@ python experiments/icde_reliability/rebuild_analysis.py --workspace "$PWD"
 python experiments/icde_reliability/audit_table_sd.py --results analysis_summaries --paper ICDE
 ```
 
-The first command audits all five experiment suites and regenerates the result tables and two quantitative figures. The second independently checks all442 mean/SD cells against raw three-seed scores. These analysis commands do not require the large model/data archives.
+These commands audit all five recorded suites and regenerate the result tables and two quantitative figures. The SD auditor independently verifies all442 mean/SD cells against raw three-seed scores. No GPU,dataset download or neural model weights are needed for this analysis.
 
-### Recompute native model forecasts
+## Train and evaluate native models
 
-Download all154 base parts and the traffic archive. Concatenate the parts and extract into the same artifact directory:
+Download all ten data parts,concatenate in their three-digit suffix order,and extract into the same artifact directory:
 
 ```sh
-cat base-assets.tar.gz.part-[0-9][0-9][0-9] > base-assets.tar.gz
-tar -xzf base-assets.tar.gz -C artifact
-tar -xzf traffic-assets.tar.gz -C artifact
+cat data-only.tar.gz.part-[0-9][0-9][0-9] > data-only.tar.gz
+tar -xzf data-only.tar.gz -C artifact
 ```
 
-Follow [ARTIFACT_REPLAY.md](docs/ARTIFACT_REPLAY.md) inside the extracted package to restore505 upstream source files,install the pinned environment,relocate paths, and recompute complete native validation/test forecasts. Native replay uses Linux,Python3.10,PyTorch2.4.1+cu121, and a compatible NVIDIA GPU. Instructions cover supplied-checkpoint replay,residual-pool regeneration,from-scratch training,Gaussian controls, and the full DeepSTUQ method.
+Follow [the training/replay instructions](docs/ARTIFACT_REPLAY.md) to restore505 upstream source files,install the measured environment,relocate paths,and invoke `from_scratch_eab.py`. Native training uses Linux,Python3.10,PyTorch2.4.1+cu121,and a compatible NVIDIA GPU. The entry point uses the recorded native training settings,refits the calibration states locally,and performs complete native validation/test evaluation.
+
+NsDiff on ETTh1 requires shared F/G initializers. The helper trains those locally from their actual saved configurations;no downloaded pretrained F/G parameters are required. DeepSTUQ's from-scratch route retains its full architecture,pretraining,all twenty AWA epochs,ten averaged snapshots,ten dropout passes,and temperature calibration.
 
 ## Evidence and interpretation
 
-All237 primary,Gaussian, state-assignment, and compiled-deployment task records and all12 traffic task records pass their independent audits. A fresh dependency environment and public-source restoration reproduce321 distinct native metric comparisons exactly across the six long-horizon backbones and a complete traffic task. Exact compilation preserves reconstructed values and threshold-event probabilities bitwise.
+All237 primary,Gaussian,state-assignment and compiled-deployment task records,and all twelve traffic records,pass their independent audits. Fresh extraction of the code archive regenerates ten result-table dependencies and both figures. The original private-checkpoint replay in a clean dependency environment reproduced321 native metric comparisons exactly. The public release distributes the recorded evidence and from-scratch training route;it does not distribute those checkpoints.
 
-The results include tradeoffs:Gaussian2P obtains lower validation-fit average CRPS than the binned correction on five long-horizon backbones; the binned correction has smaller state coverage error than both Gaussian controls on four. Traffic and long-horizon scores use different matched task sets and are not combined into an absolute ranking.
+Results include tradeoffs:Gaussian2P obtains lower validation-fit average CRPS than the binned correction on five long-horizon backbones;the binned correction has smaller state coverage error than both Gaussian controls on four. Traffic and long-horizon scores use their own matched task sets and are not pooled into an absolute ranking.
 
-## Sources and attribution
+## Attribution
 
-The code/records package preserves source identities,available licenses, and the measured modifications. Public upstream bases plus patches reconstruct the unbundled model-source files. Upstream repositories retain their own terms; this repository does not relicense third-party implementations or datasets. See package provenance and [the DeepSTUQ protocol](docs/DEEPSTUQ_PROTOCOL.md) for the original ICDE2023 source revision and integration details.
-
-The manuscript PDF and author metadata are separate from this reproducibility release.
+Public upstream bases plus measured patches reconstruct the native model sources. Source identities,available licenses,and modifications are preserved in package provenance. Upstream repositories and datasets retain their original terms;this repository does not relicense them. The manuscript PDF and author metadata are separate from this artifact release.
