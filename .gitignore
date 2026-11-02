@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+artifact/
+analysis_summaries/
+reference_records/
+*.tar.gz
+*.tar.gz.part-*
+*.pt
+*.pth
