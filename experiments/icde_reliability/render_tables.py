@@ -2,13 +2,14 @@
 import argparse
 import csv
 import json
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
-BACKBONES = ['K2VAE', 'PPM', 'TMDM', 'DiffusionTS', 'TimeDiff', 'NsDiff']
+BACKBONES = ['K2VAE', 'PPM', 'TMDM', 'DiffusionTS', 'TimeDiff', 'NsDiff', 'DeepSTUQ']
 LABELS = {'K2VAE': r'$K^2$VAE', 'PPM':'PPM', 'TMDM':'TMDM', 'DiffusionTS':'Diffusion-TS',
-          'TimeDiff':'TimeDiff', 'NsDiff':'NsDiff'}
+          'TimeDiff':'TimeDiff', 'NsDiff':'NsDiff', 'DeepSTUQ':'DeepSTUQ'}
 VENUES = {'K2VAE':"ICML '25", 'PPM':"ICML '26", 'TMDM':"ICLR '24", 'DiffusionTS':"ICLR '24",
-          'TimeDiff':"ICML '23", 'NsDiff':"ICML '25"}
+          'TimeDiff':"ICML '23", 'NsDiff':"ICML '25", 'DeepSTUQ':"ICDE '23"}
 METHODS = ['Native', 'TrainDC16', 'DC16', 'GlobalDC', 'GlobalPIT', 'ConditionalPIT']
 HEADINGS = ['Native', 'Train DC16', 'Val DC16', 'Global DC', 'Global PIT', 'Cond. PIT']
 
@@ -29,7 +30,10 @@ def cell(value, std):
         return r'--'
     if std is None or std == '':
         raise ValueError('A reported mean requires its measured sample SD')
-    return rf'${float(value):.3f}\pm{float(std):.3f}$'
+    # Guard binary summation noise at an exact three-decimal rounding boundary.
+    rounded = [Decimal(f'{float(v):.12f}').quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)
+               for v in (value, std)]
+    return rf'${rounded[0]}\pm{rounded[1]}$'
 
 
 def table(caption, label, header, rows, wide=True, numeric_from=2):
@@ -73,7 +77,7 @@ def primary(directory):
         factors = [1, 1/1024, 1, 1, 100]
         costs.append(' & '.join([LABELS[b]]+[cell(float(resource[k+'_mean'])*f,
             float(resource[k+'_std'])*f) for k,f in zip(keys,factors)])+r' \\')
-    common = 'Entries report mean $\\pm$ sample standard deviation across three training seeds after equally averaging configurations within each seed.'
+    common = 'Entries report mean $\\pm$ sample standard deviation across three training seeds after equally averaging configurations within each seed. DeepSTUQ retains traffic-flow units; other backbones use model-normalized units.'
     return {
         'full_distribution.tex':table('Complete-test distribution scores. Validation-fitted methods share fitting coordinates and native test forecasts; Train DC16 uses the earlier training segment. '+common,
             'tab:full-distribution', ['Backbone','Metric']+HEADINGS, distribution[:-1]),
@@ -84,26 +88,13 @@ def primary(directory):
         'execution_cost.tex':table('Validation-fitted DC16 execution cost. Transform and generation are microseconds per scored coordinate; the ratio is CPU transform time divided by synchronized native GPU generation time. State size is KiB. '+common,
             'tab:execution-cost', ['Backbone','Fit (s)','State (KiB)',r'Transform ($\mu$s)',r'Native ($\mu$s)',r'Ratio (\%)'], costs, numeric_from=1),
         'point_mse.tex':table('Mean-forecast MSE on the complete native test iterators. '+common,
-            'tab:point', ['Backbone','Native','Train DC16','Val DC16'], points, wide=False, numeric_from=1),
+            'tab:point', ['Backbone','Native','Train DC16','Val DC16'], points, wide=True, numeric_from=1),
     }
-
-
-def baseline(directory):
-    stats = {(r['dataset'],r['method']):r for r in read(directory/'complete_dataset_statistics.csv')}
-    methods = ['DeepSTUQ','DeepSTUQ+DC16','DeepSTUQ+GlobalDC','DeepSTUQ+PIT','NoTemperature']
-    rows = []
-    for dataset in ['PEMS03','PEMS04','PEMS07','PEMS08']:
-        for i,(key,metric) in enumerate([('CRPS','CRPS'), ('QICE_percent','QICE (pp)')]):
-            rows.append(' & '.join([dataset if i == 0 else '', metric]+
-                [cell(stats[dataset,m][key+'_mean'], stats[dataset,m][key+'_std']) for m in methods])+r' \\')
-        rows.append(r'\midrule')
-    return table('DeepSTUQ on its original traffic tasks. Scores use flow units and 100 midpoint quantiles of its predictive Gaussian marginal. All methods share the full trained backbone and its test forecasts. Entries report mean $\\pm$ sample standard deviation across three training seeds. This suite is separate from the long-horizon benchmark.',
-        'tab:deepstuq', ['Dataset','Metric',r"\shortstack{DeepSTUQ\\(ICDE '23)}",'+DC16','+Global DC','+PIT','No temperature'],rows[:-1])
 
 
 def complete_method_matrices(primary_directory, gaussian_directory):
     """All eight methods share complete-test populations; compare them directly."""
-    require_complete(gaussian_directory,237)
+    require_complete(gaussian_directory,249)
     stats={(r['backbone'],r['method']):r for r in read(primary_directory/'partial_backbone_statistics.csv')}
     stats.update({(r['backbone'],r['method']):r for r in read(gaussian_directory/'backbone_statistics.csv')})
     methods=METHODS+['GaussianVariance2P','GaussianAffine4P']
@@ -114,16 +105,16 @@ def complete_method_matrices(primary_directory, gaussian_directory):
                 raise ValueError('Gaussian and primary summary populations differ')
     distribution=[];reliability=[]
     for metric,label in [('CRPS','CRPS'),('QICE_percent','QICE (pp)')]:
-        distribution.append(r'\multicolumn{7}{l}{'+label+r'} \\')
+        distribution.append(r'\multicolumn{8}{l}{'+label+r'} \\')
         for method,name in zip(methods,labels):
             distribution.append(' & '.join([name]+[cell(stats[b,method][metric+'_mean'], stats[b,method][metric+'_std']) for b in BACKBONES])+r' \\')
         distribution.append(r'\midrule')
     for metric,label in [('state_error_pp','State coverage error (pp)'),('BrierMean','Mean Brier score')]:
-        reliability.append(r'\multicolumn{7}{l}{'+label+r'} \\')
+        reliability.append(r'\multicolumn{8}{l}{'+label+r'} \\')
         for method,name in zip(methods,labels):
             reliability.append(' & '.join([name]+[cell(stats[b,method][metric+'_mean'], stats[b,method][metric+'_std']) for b in BACKBONES])+r' \\')
         reliability.append(r'\midrule')
-    common='Entries average configurations within each training seed, then report mean $\\pm$ sample SD over three seeds. Except Train DC16, all corrections receive the same validation reservoir.'
+    common='Entries average configurations within each training seed, then report mean $\\pm$ sample SD over three seeds. Except Train DC16, all corrections receive the same validation reservoir. DeepSTUQ uses native traffic-flow units; the other backbones use model-normalized units.'
     header=['Method']+[rf'\shortstack{{{LABELS[b]}\\({VENUES[b]})}}' for b in BACKBONES]
     eligible=['Method']+[rf'\shortstack{{{LABELS[b]}\\({stats[b,"Native"]["state_error_pp_n_configurations"]}/{stats[b,"Native"]["n_configurations"]})}}' for b in BACKBONES]
     return {
@@ -141,7 +132,7 @@ if __name__ == '__main__':
     parser.add_argument('--gaussian',type=Path)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    require_complete(args.primary, 237)
+    require_complete(args.primary, 249)
     if not args.primary_only:
         if args.deepstuq is None:
             parser.error('Final table generation requires the DeepSTUQ summary or explicit --primary-only')
@@ -149,8 +140,6 @@ if __name__ == '__main__':
     outputs = primary(args.primary)
     if args.gaussian is not None:
         outputs.update(complete_method_matrices(args.primary,args.gaussian))
-    if not args.primary_only:
-        outputs['deepstuq.tex'] = baseline(args.deepstuq)
     args.output.mkdir(parents=True, exist_ok=True)
     for filename, content in outputs.items():
         (args.output/filename).write_text(content)

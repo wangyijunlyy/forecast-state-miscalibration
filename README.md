@@ -4,16 +4,16 @@ Code, data, configurations and experiment records for **Forecast-State Miscalibr
 
 ## Experiments
 
-- Six long-horizon backbones,79 dataset–horizon configurations,and three training seeds:237 training runs.
+- Seven backbones,83 dataset–horizon configurations,and three training seeds:249 training runs.
 - Empirical residual calibration,global/conditional PIT,and two-/four-parameter Gaussian corrections on paired complete native validation/test forecasts.
 - Source-validity,budget,state-assignment,and exact template-compilation controls.
-- DeepSTUQ (**ICDE2023**) on PEMS03/04/07/08 with three training seeds:twelve full native training replications.
+- DeepSTUQ (**ICDE2023**) is the seventh backbone on PEMS03/04/07/08. Its twelve native training replications receive the same primary corrections,Gaussian controls,training DC16/DC64 comparison,budget and source-validity ablations,state-assignment controls,and compilation benchmarks as the other six backbones.
 
 Backbone summaries first average configurations within each seed,then compute sample SD across three training seeds. Manuscript values use three decimal places;raw records retain full precision.
 
 ## Download
 
-The [v1.0.0 release](https://github.com/wangyijunlyy/forecast-state-miscalibration/releases/tag/v1.0.0) contains:
+Download the code and records from [v1.1.0](https://github.com/wangyijunlyy/forecast-state-miscalibration/releases/tag/v1.1.0). The unchanged dataset parts are available in [v1.0.0](https://github.com/wangyijunlyy/forecast-state-miscalibration/releases/tag/v1.0.0):
 
 | Files | Contents |
 |---|---|
@@ -21,7 +21,7 @@ The [v1.0.0 release](https://github.com/wangyijunlyy/forecast-state-miscalibrati
 | `data-only.tar.gz.part-000` through `part-009` | Original dataset files in the native loader layouts;no model checkpoints |
 | JSON manifests | File names,byte sizes and transfer-integrity records |
 
-The code archive is approximately34MB. The dataset archive is approximately639MB compressed. Model checkpoint files (`.pt`, `.pth`, `.ckpt`, `.safetensors`) are excluded from both archives.
+The dataset archive is approximately639MB compressed. Model checkpoint files (`.pt`, `.pth`, `.ckpt`, `.safetensors`) are excluded from both archives.
 
 ## Rebuild tables and figures
 
@@ -36,7 +36,7 @@ python experiments/icde_reliability/rebuild_analysis.py --workspace "$PWD"
 python experiments/icde_reliability/audit_table_sd.py --results analysis_summaries --paper ICDE
 ```
 
-These commands audit all five recorded suites and regenerate the result tables and two quantitative figures. The SD auditor independently verifies all442 mean/SD cells against raw three-seed scores. No GPU,dataset download or neural model weights are needed for this analysis.
+These commands audit the recorded suites and regenerate the shared seven-backbone result tables and two quantitative figures. The SD auditor independently verifies all469 mean/SD cells against raw three-seed scores. No GPU,dataset download or neural model weights are needed for this analysis.
 
 ## Train and evaluate native models
 
@@ -53,9 +53,9 @@ NsDiff on ETTh1 requires shared F/G initializers. The helper trains those locall
 
 ## Evidence and interpretation
 
-All237 primary,Gaussian,state-assignment and compiled-deployment task records,and all twelve traffic records,pass their independent audits. Fresh extraction of the code archive regenerates ten result-table dependencies and both figures. The original private-checkpoint replay in a clean dependency environment reproduced321 native metric comparisons exactly. The public release distributes the recorded evidence and from-scratch training route;it does not distribute those checkpoints.
+All249 primary,Gaussian,state-assignment and compiled-deployment task records are included. The twelve original DeepSTUQ training records also preserve the complete native method and provide a native-output parity reference. Fresh extraction of the code archive regenerates the shared result tables and both figures. The original private-checkpoint replay in a clean dependency environment reproduced321 native metric comparisons exactly. The public release distributes the recorded evidence and from-scratch training route;it does not distribute those checkpoints.
 
-Results include tradeoffs:Gaussian2P obtains lower validation-fit average CRPS than the binned correction on five long-horizon backbones;the binned correction has smaller state coverage error than both Gaussian controls on four. Traffic and long-horizon scores use their own matched task sets and are not pooled into an absolute ranking.
+Traffic scores retain native flow units;the other six backbones use model-normalized units. Each correction is compared within the backbone's matched task set,and the shared tables do not pool these scales into an absolute ranking.
 
 ## Attribution
 

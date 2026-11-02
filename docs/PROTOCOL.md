@@ -1,5 +1,7 @@
 # ICDE forecast reliability experiments
 
+The seventh-backbone extension adds all twelve full native DeepSTUQ runs on PEMS03/04/07/08 to these experiment families, giving83 configurations and249 tasks. The original237 identities are unchanged. `DEEPSTUQ_BACKBONE_PROTOCOL.md` specifies the native Gaussian marginal interface and references the same fitting, scoring, controls and aggregation code.
+
 Fixed before new test evaluation on 2026-11-02. The user subsequently changed the target from regular research to EAB. This track change does not alter the fixed data, methods, fitting budgets, or test evaluation protocol. The EAB deliverable requires the complete publicly accessible reproduction artifact.
 
 ## Scope and split

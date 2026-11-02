@@ -1,6 +1,6 @@
 # Forecast-state calibration experiments
 
-The fixed primary experiment is specified in `PROTOCOL.md`; the original ICDE baseline is specified in `DEEPSTUQ_PROTOCOL.md`. The primary runner reuses the actual trained checkpoint interfaces and consumes their full native validation/test iterators. It is distinct from the portable array evaluator below.
+The complete seven-backbone experiment is specified in `PROTOCOL.md` and `DEEPSTUQ_BACKBONE_PROTOCOL.md`; full native DeepSTUQ training is specified in `DEEPSTUQ_PROTOCOL.md`. The primary runner reuses the actual trained checkpoint interfaces and consumes their full native validation/test iterators. It is distinct from the portable array evaluator below.
 
 ## Fit and apply the complete empirical correction
 
@@ -66,3 +66,7 @@ python -m unittest discover -s experiments/icde_reliability -p 'test_*.py' -v
 The author DeepSTUQ repository is fetched at the revision specified in `DEEPSTUQ_PROTOCOL.md`. Third-party source redistribution depends on its license; the reproduction package should fetch the original revision rather than silently relicense that source.
 
 `collect_provenance.py` preserves the actual source/configuration dependencies and package versions used on the server. Its private snapshot includes local interface corrections and source folders that have no Git metadata. `provenance/source_provenance.json` identifies revisions and license files, and `provenance/environment.json` records the installed environment. The private source snapshot is separate from a public release; code without a redistribution license is obtained from its original repository by the eventual reproduction instructions.
+
+## Seventh-backbone integration
+
+DeepSTUQ uses all four original PeMS datasets and three training seeds. `deepstuq_backbone.py` reuses each full native checkpoint and evaluates every common calibration/control family. `rebuild_analysis.py` combines its twelve tasks with the237 long-horizon tasks, independently audits all249 records per suite, and renders shared seven-backbone tables. `audit_deepstuq_backbone.py` additionally checks complete native training, original-output parity, full traversal, fitting identities and source counts. Traffic-flow scores retain native units; long-horizon scores retain their native model-normalized units.

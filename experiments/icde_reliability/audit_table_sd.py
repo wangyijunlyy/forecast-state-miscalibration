@@ -7,6 +7,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean, stdev
+from decimal import Decimal, ROUND_HALF_UP
 
 
 def read(path):
@@ -33,7 +34,7 @@ def main():
     parser.add_argument('--results', type=Path, required=True)
     parser.add_argument('--paper', type=Path, required=True)
     args = parser.parse_args(); root = args.results; paper = args.paper
-    backbones = ['K2VAE', 'PPM', 'TMDM', 'DiffusionTS', 'TimeDiff', 'NsDiff']
+    backbones = ['K2VAE', 'PPM', 'TMDM', 'DiffusionTS', 'TimeDiff', 'NsDiff', 'DeepSTUQ']
     methods = ['Native', 'TrainDC16', 'DC16', 'GlobalDC', 'GlobalPIT', 'ConditionalPIT',
                'GaussianVariance2P', 'GaussianAffine4P']
     primary = read(root/'summary/raw_task_metrics.csv')
@@ -59,9 +60,6 @@ def main():
         for k,f in [('dc16_fit_seconds', 1), ('dc16_calibrator_bytes', 1/1024),
                     ('dc16_transform_us_per_coordinate', 1), ('native_generation_us_per_coordinate', 1),
                     ('dc16_transform_to_generation_ratio', 100)]]
-    traffic = read(root/'deepstuq/summary/raw_task_metrics.csv')
-    expected['deepstuq'] = [estimate(traffic, 'DeepSTUQ', m, k, d) for d in ['PEMS03', 'PEMS04', 'PEMS07', 'PEMS08']
-        for k in ['CRPS', 'QICE_percent'] for m in ['DeepSTUQ', 'DeepSTUQ+DC16', 'DeepSTUQ+GlobalDC', 'DeepSTUQ+PIT', 'NoTemperature']]
     diagnosis = read(paper/'figures/source_data/validation_native_task_diagnostics.csv')
     expected['problem_diagnostics'] = [estimate(diagnosis, b, 'Native', k) for b in backbones
         for k in ['pooled_median_error_pp', 'state_median_error_pp', 'state_median_range_pp']]
@@ -69,7 +67,8 @@ def main():
     for name, values in expected.items():
         source = (paper/'tables'/f'{name}.tex').read_text()
         actual = re.findall(r'\$(-?\d+\.\d{3})\\pm(\d+\.\d{3})\$', source)
-        target = [(f'{m:.3f}', f'{s:.3f}') for m,s in values]
+        target = [tuple(str(Decimal(f'{v:.12f}').quantize(Decimal('0.001'), rounding=ROUND_HALF_UP))
+                        for v in (m, s)) for m, s in values]
         if actual != target or 'TBD' in source:
             raise ValueError(f'Mean/SD cells differ from independent raw-seed recomputation: {name}')
         counts[name] = len(actual)

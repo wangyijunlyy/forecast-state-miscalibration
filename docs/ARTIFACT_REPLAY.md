@@ -11,7 +11,7 @@ python experiments/icde_reliability/rebuild_analysis.py --workspace "$PWD"
 python experiments/icde_reliability/audit_table_sd.py --results analysis_summaries --paper ICDE
 ```
 
-This audits the saved experiment records,rebuilds the numerical tables and two figures,and independently checks all442 mean/SD cells against raw three-seed scores. It does not require datasets,a GPU or trained model parameters. Raw statistics retain full precision;manuscript tables use measured sample standard deviations to three decimal places.
+This audits the saved experiment records,rebuilds the numerical tables and two figures,and independently checks all469 mean/SD cells against raw three-seed scores. It does not require datasets,a GPU or trained model parameters. Raw statistics retain full precision;manuscript tables use measured sample standard deviations to three decimal places.
 
 ## Restore data and native sources
 
@@ -47,7 +47,7 @@ NsDiff on ETTh1 uses shared seed1 mean/variance initializers. Before diffusion t
 
 For Gaussian controls,run the supplied Gaussian runner against the generated replay task JSON after primary quality evaluation. Compiled and state-assignment scripts consume the regenerated primary calibration/test reservoirs. Their native fitting budgets,random states and score definitions are specified in the accompanying protocols.
 
-## Train the original ICDE traffic baseline
+## Train and evaluate DeepSTUQ as the seventh backbone
 
 ```sh
 python replay_eab.py --bundle "$PWD" --stage deepstuq \
@@ -56,6 +56,18 @@ python replay_eab.py --bundle "$PWD" --stage deepstuq \
 
 Repeat for PEMS03/04/07/08 and seeds1,2,3. This executes the full original combined architecture,native pretraining,all twenty AWA epochs and ten snapshots,ten dropout inference passes,and validation-fitted temperature calibration. The protocol records the training-only normalization and 100-midpoint Gaussian marginal representation used for common metrics.
 
+After each native training run, execute all common calibration and control experiments against its locally generated checkpoint:
+
+```sh
+CUDA_VISIBLE_DEVICES=0 python "$ICDE_RUN_ROOT/code/deepstuq_backbone.py" \
+  --dataset PEMS04 --seed 1 \
+  --native-runs "$ICDE_RUN_ROOT/standalone_traffic/deepstuq/runs" \
+  --output-root "$ICDE_RUN_ROOT/retrained_deepstuq_backbone"
+```
+
+Repeat both steps for all four datasets and three seeds. This second command fits training DC16/DC64,compares the same eight primary/Gaussian methods on the complete native test iterator,and runs the fitting-budget,source-validity,state-assignment and exact-compilation controls. See `DEEPSTUQ_BACKBONE_PROTOCOL.md`. No additional neural training is performed by this command when the native checkpoint is complete.
+
+
 ## Reference records and new training runs
 
-The saved records document the reported237-checkpoint long-horizon suite and twelve traffic runs. Complete native replay with the original private checkpoints previously reproduced321 metric comparisons exactly;those checkpoints are not distributed in this release. Public reconstruction of the reported tables uses the saved records. New native forecast replications use locally trained checkpoints and should be compared with the recorded scores under the same seed-aware aggregation. Original supplied-checkpoint shortcuts require privately retained checkpoints. This public release uses the from-scratch route above.
+The saved records document249 paired checkpoints:237 long-horizon tasks and twelve DeepSTUQ tasks. All seven backbones receive the same experiment families and appear in shared tables. Complete native replay with the original private checkpoints previously reproduced321 metric comparisons exactly;those checkpoints are not distributed in this release. Public reconstruction of the reported tables uses the saved records. New native forecast replications use locally trained checkpoints and should be compared with the recorded scores under the same seed-aware aggregation. Original supplied-checkpoint shortcuts require privately retained checkpoints. This public release uses the from-scratch route above.

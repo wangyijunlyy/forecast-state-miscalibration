@@ -1,91 +1,73 @@
-# Forecast-state reliability: reproduction artifact
+# Reproduce from code, data and recorded results
 
-This artifact contains the code, configurations, 237 native forecasting checkpoints, 12 fully trained DeepSTUQ checkpoints, required conditional predictors and shared initializations, native dataset files, training-fitted residual pools, reference records, and scripts for rebuilding the paper's numerical tables and two figures. The manuscript PDF and author information are distributed separately. Public hosting is a distinct publication step; the package does not claim an available URL before hosting is verified.
+The public release contains code, configurations, reference results and datasets. Neural model weights are excluded at the author's request. Training creates model checkpoints locally.
 
-## Extract and rebuild the reported analysis
+## Rebuild the reported tables and figures
 
-Extract the code/records archive, `base-assets.tar.gz`, and `traffic-assets.tar.gz` into the same new directory. Asset filenames and sizes are listed in the accompanying archive manifests. Extract the package at its final location before relocation. Table and figure generation needs Python, NumPy, SciPy, and Matplotlib; it does not require a GPU or model inference:
+Extract `code-and-records.tar.gz` into a new directory. With Python3.10–3.12 and NumPy1.26.4,SciPy1.15.3,Matplotlib3.10.3 installed:
 
 ```sh
 python experiments/icde_reliability/rebuild_analysis.py --workspace "$PWD"
+python experiments/icde_reliability/audit_table_sd.py --results analysis_summaries --paper ICDE
 ```
 
-This independently audits all 237 primary, 237 Gaussian, 237 compiled, 237 state-assignment, and 12 traffic records, then rebuilds `ICDE/tables/` and `ICDE/figures/`. `analysis_summaries/` contains the recalculated numerical summaries. Aggregation averages configurations within each training seed before computing the mean and sample SD across seeds 1, 2, and 3. All manuscript tables report the measured sample SD rounded to three decimals; raw statistics retain full precision. Integer counts, event totals, and paired population checks support the reported metrics. Rebuilding tables from records and recomputing forecasts are separate operations.
+This audits the saved experiment records,rebuilds the numerical tables and two figures,and independently checks all469 mean/SD cells against raw three-seed scores. It does not require datasets,a GPU or trained model parameters. Raw statistics retain full precision;manuscript tables use measured sample standard deviations to three decimal places.
 
-## Restore the native model sources and environment
+## Restore data and native sources
 
-The public package supplies verified public source revisions and the measured source changes for 505 upstream files. Fetch those sources before relocation:
+Concatenate the data parts in their three-digit suffix order and extract into that same directory:
 
 ```sh
+cat data-only.tar.gz.part-[0-9][0-9][0-9] > data-only.tar.gz
+tar -xzf data-only.tar.gz
 python restore_upstream.py --bundle "$PWD"
 python relocate_eab.py --bundle "$PWD"
 python3.10 -m venv .venv
 . .venv/bin/activate
 python setup_environment.py --requirements requirements-runtime.txt
 . ./activate.sh
-python check_relocated.py --bundle "$PWD"
 ```
 
-The bootstrap requires network access to the pinned public repositories and the standard `patch` utility. Attribution and available upstream licenses are retained; upstream repositories are not relicensed. `payload/` preserves the loader layouts. Relocation changes only copied source/configuration/metadata text and never rewrites model binaries or data. Dataset copies are separate from live experiment inputs because some native loaders re-extract files. A relocated tree refuses relocation to a different root; use a pristine extraction when moving it.
+The measured native environment is Linux,Python3.10.19,PyTorch2.4.1+cu121,and RTX4090 GPUs. Public upstream revisions plus measured patches reconstruct the model sources. Available upstream licenses and source attribution are retained.
 
-The measured native environment is Linux, Python 3.10.19, PyTorch 2.4.1+cu121, NumPy 1.26.4, SciPy 1.15.3, and RTX4090 GPUs. The installer first obtains the pinned CUDA wheels, then installs the full resolved requirements and runs `pip check`. The compatible 174-distribution lock uses packaging 24.2 and fsspec 2024.12.0 to satisfy Lightning constraints while retaining the original numerical/model-library versions. Original and resolved dependency records are kept separately in provenance. The seven native interfaces pass imports in the clean environment.
+## Train and evaluate a native task
 
-## Recompute native forecasts and paired scores
-
-Select a task identity from the manifest:
+From the fresh relocated extraction:
 
 ```sh
-python replay_eab.py --bundle "$PWD" --stage quality \
+python from_scratch_eab.py --bundle "$PWD" \
+  --task K2VAE_ettm1_h192_seed1 --gpu 0 --check-only
+python from_scratch_eab.py --bundle "$PWD" \
   --task K2VAE_ettm1_h192_seed1 --gpu 0
 ```
 
-The command loads the supplied native checkpoint, traverses the complete native validation iterator, fits validation corrections, and traverses the complete native test iterator. It recreates six paired quality outputs, validation diagnostics, event thresholds, and retained-coordinate controls. Active replay outputs start empty and are separate from `reference_records/`; the command uses no copied quality-result cache. Repeat for every manifest identity to recompute the primary suite.
+Use the manifest identities for the other backbone,dataset,horizon and seed combinations. The command invokes the original native training entry point with the recorded epoch budgets and validation selection,collects native training forecasts to refit the source-filtered DC16/DC64 residual pools,and evaluates all six primary methods on complete native validation/test iterators. Stages may also be run individually with `--stage train`, `--stage fit`, and `--stage quality`. Generated checkpoints and calibration states remain local. Native output directories must start without model checkpoints for a new training replication.
 
-The earlier training-fitted residual state is supplied as an input. Independently regenerate and compare its DC16/DC64 arrays with:
+NsDiff on ETTh1 uses shared seed1 mean/variance initializers. Before diffusion training,the helper invokes the native F/G pretraining classes with their actual saved arguments (`provenance/shared_initializers/F.json` and `G.json`):F uses ten epochs and G uses twenty,with their original validation selection settings. The initializers are trained once locally and reused across diffusion seeds,as in the experiment protocol. The wrapper omits only the stray `%ln` notebook-magic line when loading the native G class. Model architectures and training objectives are unchanged.
 
-```sh
-python replay_eab.py --bundle "$PWD" --stage traincal \
-  --task K2VAE_ettm1_h192_seed1 --gpu 0
-```
+For Gaussian controls,run the supplied Gaussian runner against the generated replay task JSON after primary quality evaluation. Compiled and state-assignment scripts consume the regenerated primary calibration/test reservoirs. Their native fitting budgets,random states and score definitions are specified in the accompanying protocols.
 
-Original backbone training writes a fresh run rather than skipping a supplied checkpoint:
-
-```sh
-python replay_eab.py --bundle "$PWD" --stage train \
-  --task K2VAE_ettm1_h192_seed1 --gpu 0
-```
-
-For the Gaussian controls, run after the matching primary quality replay:
-
-```sh
-export ICDE_RUN_ROOT="$PWD/payload/home/wyj/icde_reliability_20261102"
-export CUDA_VISIBLE_DEVICES=0
-python "$ICDE_RUN_ROOT/code/run_gaussian.py" \
-  --task "$ICDE_RUN_ROOT/replay_tasks/K2VAE_ettm1_h192_seed1.json"
-```
-
-This refits both Gaussian models on the regenerated validation reservoir and repeats complete native test evaluation. After all primary tasks, run the retained-coordinate state and execution controls:
-
-```sh
-python "$ICDE_RUN_ROOT/code/benchmark_compiled.py" --root "$ICDE_RUN_ROOT"
-python "$ICDE_RUN_ROOT/code/run_state_controls.py" --workers 4
-```
-
-Their timed cohorts are separate from complete-test quality evaluation. `PROTOCOL.md`, `GAUSSIAN_PROTOCOL.md`, `STATE_CONTROLS_PROTOCOL.md`, and `COMPILED_PROTOCOL.md` specify the fitting budgets, random states, metric conventions, and comparisons. Independent aggregate scripts accept explicit regenerated run directories; their command-line options are shown with `--help`. Pass the regenerated records to `rebuild_analysis.py --records` using the same layout as `reference_records/` to regenerate the manuscript analysis from new outputs.
-
-## Recompute the original ICDE traffic method
+## Train and evaluate DeepSTUQ as the seventh backbone
 
 ```sh
 python replay_eab.py --bundle "$PWD" --stage deepstuq \
-  --dataset PEMS04 --seed 1 --gpu 0
+  --dataset PEMS04 --seed 1 --gpu 0 --from-scratch
 ```
 
-The default loads the supplied fully trained native model and temperature, refits empirical corrections, and evaluates the complete native traffic test iterator. Add `--from-scratch` with a fresh `--output-root` to run all native pretraining (at most 100 epochs, patience 15), all 20 AWA epochs and ten averaged snapshots, ten dropout inference passes, and native temperature calibration. The wrapper bypasses only the old campaign queue-wait hook. It preserves the author architecture, substantive objectives, and all training/calibration stages.
+Repeat for PEMS03/04/07/08 and seeds1,2,3. This executes the full original combined architecture,native pretraining,all twenty AWA epochs and ten snapshots,ten dropout inference passes,and validation-fitted temperature calibration. The protocol records the training-only normalization and 100-midpoint Gaussian marginal representation used for common metrics.
 
-Training-only normalization and the 100-midpoint representation of the native Gaussian marginal are specified in `DEEPSTUQ_PROTOCOL.md`. The 100 quantiles do not denote 100 dropout passes or joint trajectories. Full native Gaussian NLL, 95% coverage, and interval-width scores are retained. The traffic suite uses flow units on its own matched tasks; absolute scores are not ranked against the long-horizon suite.
+After each native training run, execute all common calibration and control experiments against its locally generated checkpoint:
 
-## Executed replay evidence
+```sh
+CUDA_VISIBLE_DEVICES=0 python "$ICDE_RUN_ROOT/code/deepstuq_backbone.py" \
+  --dataset PEMS04 --seed 1 \
+  --native-runs "$ICDE_RUN_ROOT/standalone_traffic/deepstuq/runs" \
+  --output-root "$ICDE_RUN_ROOT/retrained_deepstuq_backbone"
+```
 
-Public-source restoration was executed and all 505 restored files matched the observed sources byte for byte. In a fresh Python environment and a fresh relocated tree, one complete validation/test task per long-horizon backbone reproduces 216 primary-method metric comparisons exactly. Refitting Gaussian2P/Gaussian4P and repeating those complete native tests reproduces 72 further comparisons exactly. A complete native PEMS04 traffic replay reproduces 33 comparisons, including five paired methods and native Gaussian scores, exactly. These are 321 distinct metric comparisons, with maximum absolute difference zero. The training-fitted K2VAE DC16/DC64 residual arrays have also been regenerated exactly. Detailed audits are retained in provenance.
+Repeat both steps for all four datasets and three seeds. This second command fits training DC16/DC64,compares the same eight primary/Gaussian methods on the complete native test iterator,and runs the fitting-budget,source-validity,state-assignment and exact-compilation controls. See `DEEPSTUQ_BACKBONE_PROTOCOL.md`. No additional neural training is performed by this command when the native checkpoint is complete.
 
-The legacy SPARC namespaces supply checkpoint and data interfaces. The experiment obtains forecasts from the raw backbone samplers and applies the evaluated calibration operators explicitly. Unused CAISO, Nordpool, Kaggle, and Solar-NIPS inputs are excluded from the package. Figure extraction retains measured source arrays; its example-selection rule uses validation templates and forecast outputs rather than test-target selection.
+
+## Reference records and new training runs
+
+The saved records document249 paired checkpoints:237 long-horizon tasks and twelve DeepSTUQ tasks. All seven backbones receive the same experiment families and appear in shared tables. Complete native replay with the original private checkpoints previously reproduced321 metric comparisons exactly;those checkpoints are not distributed in this release. Public reconstruction of the reported tables uses the saved records. New native forecast replications use locally trained checkpoints and should be compared with the recorded scores under the same seed-aware aggregation. Original supplied-checkpoint shortcuts require privately retained checkpoints. This public release uses the from-scratch route above.

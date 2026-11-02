@@ -1,5 +1,7 @@
 # Full Gaussian controls for the EAB study
 
+The current seven-backbone study also applies both controls to the twelve DeepSTUQ tasks. Their Gaussian corrections share the primary test prediction pass and the identical validation reservoir; the fitting algorithm and optimizer budgets below are unchanged. Combined coverage is249 tasks.
+
 The user changed the target to EAB. Extend the already evaluated two-/four-parameter Gaussian controls to all237 checkpoint identities, preserving the original trained networks, data and complete native test iterators.
 
 Fit on the exact historical validation reservoir already saved by the primary suite (up to50000 coordinates from at most100 native validation batches/windows). Gaussian variance calibration uses mean `mu` and variance `A+B*sigma^2`; Gaussian affine calibration uses mean `c0+c1*mu` and that same variance. Constraints are `A,B>=0`, with variance floored at1e-12. Inputs use the native100-member mean and ddof1 scale floored at1e-6. There is no division by the native scale in this likelihood family, so all supplied fitting coordinates enter the objective.

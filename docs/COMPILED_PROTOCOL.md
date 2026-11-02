@@ -1,5 +1,7 @@
 # Exact fixed-grid deployment and threshold queries
 
+The current seven-backbone study also runs this protocol for every DeepSTUQ dataset and training seed, giving249 task records. The complete native predictive marginals, fitted residual pools and real channel/horizon identities are retained.
+
 This is an implementation experiment for the completed237-task primary suite. It changes neither fitted residual pools nor any predictive-quality result. Compile each validation-fitted DC16 pool into the same100 midpoint quantiles used in the actual reconstruction. Share fallback templates through a16-state-to-template lookup. Deploy only quantile tables, state boundaries and horizon metadata.
 
 For a threshold query, binary-search the ordered reconstructed values `mu + sigma*q[j]`, returning the fraction strictly above the threshold. Comparing reconstructed values directly preserves floating-point ties that can change when a threshold is instead standardized. Reusing stored native ensemble means and ddof1/floored scales allows repeated threshold queries without retaining or decoding a100-member corrected ensemble.

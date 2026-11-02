@@ -13,12 +13,18 @@ CODE=Path(__file__).resolve().parent
 parser=argparse.ArgumentParser();parser.add_argument('--workspace',type=Path,default=CODE.parents[1])
 parser.add_argument('--records',type=Path);parser.add_argument('--manifest',type=Path)
 parser.add_argument('--training-runs',type=Path,help='Complete training-fitted DC16/DC64 records for configuration-win counts')
-parser.add_argument('--primary-only',action='store_true',help='Rebuild the six-backbone benchmark without the separate traffic table')
+parser.add_argument('--primary-only',action='store_true',help='Skip the original native traffic-training audit')
 args=parser.parse_args();workspace=args.workspace.resolve();local=workspace/'experiments/icde_reliability/results'
 records=args.records.resolve() if args.records else (workspace/'reference_records' if (workspace/'reference_records').exists() else local)
 manifest=args.manifest or workspace/'experiments/source_filtered_reproduction/results/manifest.json'
 training=args.training_runs or (workspace/'payload/home/wyj/source_filtered_reproduction/runs' if (workspace/'payload').exists() else workspace/'experiments/source_filtered_reproduction/results/runs')
 summary=local if records==local else workspace/'analysis_summaries';paper=workspace/'ICDE'
+if (records/'deepstuq_backbone/manifest.json').exists():
+    from merge_deepstuq_records import prepare_records
+    records, manifest, training = prepare_records(records,manifest,training,workspace/'seven_backbone_records')
+expected_tasks=len(json.loads(manifest.read_text()))
+if expected_tasks != 249:
+    raise ValueError('The current manuscript requires all249 tasks from seven backbones')
 native_layout=(records/'gaussian/runs').exists()
 gaussian=records/('gaussian/runs' if native_layout else 'gaussian_runs')
 compiled=records/('compiled_deployment/runs' if (records/'compiled_deployment/runs').exists() else 'compiled/runs')
@@ -70,7 +76,7 @@ execute('aggregate_gaussian.py',['--runs',gaussian,'--primary-runs',records/'run
 execute('aggregate_compiled.py',['--runs',compiled,'--primary-runs',records/'runs','--manifest',manifest,'--output',summary/'compiled/summary'])
 execute('aggregate_state_controls.py',['--runs',state,'--primary-runs',records/'runs','--compiled-runs',compiled,'--manifest',manifest,'--output',summary/'state_controls/summary'])
 for directory in ['summary','gaussian/summary','compiled/summary','state_controls/summary']:
-    require(summary/directory,237)
+    require(summary/directory,expected_tasks)
 arguments=['--primary',summary/'summary','--gaussian',summary/'gaussian/summary','--output',paper/'tables']
 if args.primary_only:
     arguments+=['--primary-only']
@@ -82,4 +88,4 @@ configuration_wins()
 execute('render_eab_controls.py',['--results',summary,'--output',paper/'tables'])
 environment=dict(os.environ,ICDE_ANALYSIS_RESULTS=str(records))
 subprocess.run([sys.executable,str(paper/'scripts/plot_eab_evidence.py')],env=environment,check=True,stdout=subprocess.DEVNULL)
-print('Rebuilt audited numerical tables and both quantitative figures. Traffic table included:',not args.primary_only)
+print('Rebuilt seven-backbone numerical tables and both quantitative figures. Native traffic-training audit included:',not args.primary_only)

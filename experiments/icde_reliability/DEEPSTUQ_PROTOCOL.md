@@ -1,5 +1,7 @@
 # ICDE 2023 DeepSTUQ baseline
 
+This document records the original full native training replication. The current paper treats DeepSTUQ as its seventh backbone and applies the full common experiment matrix on all four original datasets; see `DEEPSTUQ_BACKBONE_PROTOCOL.md`. The original five-method records remain as the native replay reference, rather than a separate final comparison table.
+
 User-requested additional baseline, selected after locating an actual probabilistic forecasting method from a core data engineering conference.
 
 Paper: Weizhu Qian, Dalin Zhang, Yan Zhao, Kai Zheng, James J. Q. Yu, *Uncertainty Quantification for Traffic Forecasting: A Unified Approach*, ICDE 2023, pp.992--1004, DOI 10.1109/ICDE55515.2023.00081.
