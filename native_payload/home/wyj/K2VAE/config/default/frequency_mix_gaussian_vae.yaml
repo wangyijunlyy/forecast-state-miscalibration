@@ -1,0 +1,23 @@
+model:
+  forecaster:
+    class_path: probts.model.forecaster.prob_forecaster.frequency_mix_gaussian_vae.FrequencyMixGaussianVAEModel
+    init_args:
+      d_model: 128
+      d_ff: 256
+      e_layers: 1
+      dropout: 0.1
+      activation: relu
+      n_heads: 4
+      factor: 3
+      patch_len: 24
+      multistep: true
+      dynamic_dim: 128
+      hidden_layers: 3
+      hidden_dim: 256
+      weight_beta: 0.01
+      likelihood: gaussian
+      mix_period_len: 2
+      mix_lpf: 2
+      mix_alpha: 0.5
+      mix_use_local_conv: true
+      sample_schedule: 20

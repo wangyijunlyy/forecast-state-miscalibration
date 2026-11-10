@@ -1,0 +1,43 @@
+# Bloch Dynamics VAE Configuration for ETTm2
+# Direct quantum supervision - no decoder architecture
+
+seed_everything: 1
+trainer:
+  accelerator: gpu
+  devices: 1
+  strategy: auto
+  max_epochs: 50
+  use_distributed_sampler: false
+  limit_train_batches: 100
+  log_every_n_steps: 1
+  check_val_every_n_epoch: 1
+  default_root_dir: ./results
+  accumulate_grad_batches: 1
+  gradient_clip_val: 0.5
+model:
+  forecaster:
+    class_path: probts.model.forecaster.prob_forecaster.bloch_dynamics_vae.BlochDynamicsVAEModel
+    init_args:
+      patch_len: 24
+      n_qubits: 4
+      n_layers: 2
+      hidden_dim: 128
+      hidden_layers: 3
+      # Bloch Loss weights
+      lambda_val: 1.0 # Z-axis (value) supervision
+      lambda_grad: 1.0 # Y-axis (gradient) supervision
+      lambda_vol: 0.5 # X-axis (volatility) supervision
+      lambda_purity: 0.1 # Geometric purity constraint
+      weight_pred: 1.0 # Prediction MSE weight
+  num_samples: 100
+  learning_rate: 0.001
+  quantiles_num: 20
+data:
+  data_manager:
+    class_path: probts.data.data_manager.DataManager
+    init_args:
+      split_val: true
+      scaler: standard
+  batch_size: 64
+  test_batch_size: 32
+  num_workers: 8

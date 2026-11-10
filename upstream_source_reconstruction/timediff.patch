@@ -1,0 +1,2473 @@
+--- /dev/null
++++ b/scripts/TimeDiff/clean_timediff_processes.sh
+@@ -0,0 +1,13 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="${ROOT:-$HOME/SPARC/NsDiff_TimeDiff_SPARC_PIT_Fresh}"
++
++echo "[$(date)] stopping stale TimeDiff jobs"
++pkill -f TimeDiff.py || true
++pkill -f TimeDiff_SPARC_PIT.py || true
++pkill -f run_one_dataset_managed.sh || true
++
++mkdir -p "$ROOT/.locks" "$ROOT/logs"
++find "$ROOT/.locks" -maxdepth 1 -type d -name 'timeDiff_sparc_*' -exec rm -rf {} +
++echo "[$(date)] stale jobs stopped and locks cleared"
+--- /dev/null
++++ b/scripts/TimeDiff/collect_results_comparison.py
+@@ -0,0 +1,149 @@
++#!/usr/bin/env python3
++from __future__ import annotations
++
++import argparse
++import ast
++import csv
++from pathlib import Path
++
++
++DATASETS = {
++    "ETTh1": ("ETTh1", 192),
++    "ETTh2": ("ETTh2", 192),
++    "ETTm1": ("ETTm1", 192),
++    "ETTm2": ("ETTm2", 192),
++    "ECL": ("Electricity", 192),
++    "EXG": ("ExchangeRate", 192),
++    "ILI": ("ILI", 36),
++    "Solar": ("SolarEnergy", 192),
++    "Traffic": ("Traffic", 192),
++}
++
++FIELDNAMES = [
++    "dataset",
++    "method",
++    "CRPS",
++    "QICE",
++    "MSE",
++    "MAE",
++    "train_time_min",
++    "peak_memory_MiB",
++]
++
++
++def parse_dict_text(text: str) -> dict[str, float] | None:
++    try:
++        parsed = ast.literal_eval(text.strip())
++    except (SyntaxError, ValueError):
++        return None
++    if not isinstance(parsed, dict):
++        return None
++    return parsed
++
++
++def parse_baseline_metrics(path: Path) -> dict[str, float] | None:
++    found = None
++    if not path.exists():
++        return None
++    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
++        marker = "test_results:"
++        if marker in line:
++            found = parse_dict_text(line.split(marker, 1)[1])
++    return found
++
++
++def parse_metrics_file(path: Path) -> dict[str, float] | None:
++    if not path.exists():
++        return None
++    lines = [line for line in path.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip()]
++    if not lines:
++        return None
++    return parse_dict_text(lines[-1])
++
++
++def latest_baseline(root: Path, dataset_type: str, pred_len: int, seed: int, windows: int, horizon: int):
++    run_root = root / "results" / "runs" / "TimeDiff" / dataset_type / f"w{windows}h{horizon}s{pred_len}"
++    candidates = sorted(run_root.glob("**/output.log"), key=lambda p: p.stat().st_mtime if p.exists() else 0)
++    for candidate in reversed(candidates):
++        metrics = parse_baseline_metrics(candidate)
++        if metrics:
++            return metrics
++    return None
++
++
++def sparc_metrics(root: Path, dataset_type: str, pred_len: int, seed: int, windows: int, horizon: int):
++    path = (
++        root
++        / "results"
++        / "sparc_pit"
++        / f"TimeDiff_{dataset_type}_w{windows}h{horizon}s{pred_len}_seed{seed}_managed"
++        / "sparc_pit_test_metrics.txt"
++    )
++    return parse_metrics_file(path)
++
++
++def load_metadata(root: Path):
++    metadata: dict[tuple[str, str], tuple[str, str]] = {}
++    path = root / "results" / "run_metadata.csv"
++    if not path.exists():
++        return metadata
++    with path.open(newline="", encoding="utf-8") as f:
++        for row in csv.DictReader(f):
++            key = (row.get("dataset", ""), row.get("method", ""))
++            metadata[key] = (row.get("train_time_min", ""), row.get("peak_memory_MiB", ""))
++    return metadata
++
++
++def value(metrics: dict[str, float] | None, key: str) -> str:
++    if not metrics:
++        return ""
++    for candidate in (key, key.lower()):
++        if candidate in metrics:
++            return str(metrics[candidate])
++    return ""
++
++
++def row(label: str, dataset_type: str, method: str, metrics: dict[str, float] | None, metadata):
++    train_time, peak = metadata.get((dataset_type, method), ("", ""))
++    return {
++        "dataset": label,
++        "method": method,
++        "CRPS": value(metrics, "CRPS"),
++        "QICE": value(metrics, "QICE"),
++        "MSE": value(metrics, "MSE"),
++        "MAE": value(metrics, "MAE"),
++        "train_time_min": train_time,
++        "peak_memory_MiB": peak,
++    }
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--root", type=Path, default=Path.cwd())
++    parser.add_argument("--datasets", default=",".join(DATASETS))
++    parser.add_argument("--seed", type=int, default=1)
++    parser.add_argument("--windows", type=int, default=168)
++    parser.add_argument("--horizon", type=int, default=1)
++    parser.add_argument("--output", type=Path, default=Path("results_comparison.csv"))
++    args = parser.parse_args()
++
++    labels = [item.strip() for item in args.datasets.replace(" ", ",").split(",") if item.strip()]
++    metadata = load_metadata(args.root)
++    rows = []
++    for label in labels:
++        dataset_type, pred_len = DATASETS[label]
++        base = latest_baseline(args.root, dataset_type, pred_len, args.seed, args.windows, args.horizon)
++        sparc = sparc_metrics(args.root, dataset_type, pred_len, args.seed, args.windows, args.horizon)
++        rows.append(row(label, dataset_type, "TimeDiff", base, metadata))
++        rows.append(row(label, dataset_type, "TimeDiff-SPARC", sparc, metadata))
++
++    args.output.parent.mkdir(parents=True, exist_ok=True)
++    with args.output.open("w", newline="", encoding="utf-8") as f:
++        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
++        writer.writeheader()
++        writer.writerows(rows)
++    print(args.output)
++
++
++if __name__ == "__main__":
++    main()
+--- /dev/null
++++ b/scripts/TimeDiff/run_fresh_timediff_sparc_pit_all.sh
+@@ -0,0 +1,242 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="${ROOT:-$HOME/SPARC/NsDiff_TimeDiff_SPARC_PIT_Fresh}"
++LOG_ROOT="${LOG_ROOT:-$ROOT/logs/fresh_timediff_sparc_pit_$(date +%Y%m%d_%H%M%S)}"
++SEEDS="${SEEDS:-1 2 3}"
++WINDOWS="${WINDOWS:-168}"
++HORIZON="${HORIZON:-1}"
++BATCH_SIZE="${BATCH_SIZE:-32}"
++EPOCHS="${EPOCHS:-10}"
++PATIENCE="${PATIENCE:-5}"
++NUM_WORKERS="${NUM_WORKERS:-8}"
++MAX_PARALLEL="${MAX_PARALLEL:-2}"
++NUM_STEPS="${NUM_STEPS:-20}"
++BETA_START="${BETA_START:-0.0001}"
++BETA_END="${BETA_END:-0.02}"
++SCHEDULE="${SCHEDULE:-linear}"
++
++SPARC_EPOCHS="${SPARC_EPOCHS:-10}"
++SPARC_PATIENCE="${SPARC_PATIENCE:-5}"
++CHECK_VAL_EVERY_N_EPOCH="${CHECK_VAL_EVERY_N_EPOCH:-1}"
++LIMIT_TRAIN_BATCHES="${LIMIT_TRAIN_BATCHES:-100}"
++LIMIT_PIT_FIT_BATCHES="${LIMIT_PIT_FIT_BATCHES:-100}"
++LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-100}"
++EVAL_NUM_SAMPLES="${EVAL_NUM_SAMPLES:-100}"
++STATS_NUM_SAMPLES="${STATS_NUM_SAMPLES:-100}"
++SAMPLE_CHUNK_SIZE="${SAMPLE_CHUNK_SIZE:-20}"
++PIT_WARP_STRENGTH="${PIT_WARP_STRENGTH:-1.0}"
++
++mkdir -p "$LOG_ROOT"
++cd "$ROOT"
++
++source "$HOME/miniconda3/etc/profile.d/conda.sh" 2>/dev/null \
++  || source "$HOME/anaconda3/etc/profile.d/conda.sh" 2>/dev/null \
++  || source /opt/conda/etc/profile.d/conda.sh
++conda activate k2vae
++
++export PYTHONPATH=./
++export CUDA_DEVICE_ORDER=PCI_BUS_ID
++export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
++
++checkpoint_for() {
++  local dataset="$1"
++  local pred_len="$2"
++  local seed="$3"
++  find "results/runs/TimeDiff/${dataset}/w${WINDOWS}h${HORIZON}s${pred_len}" \
++    -maxdepth 2 -type f \( -name best_model.pth -o -name model.pth \) 2>/dev/null \
++    | grep "/${seed}/" \
++    | sort \
++    | tail -n 1 \
++    | xargs -r dirname
++}
++
++run_baseline_once() {
++  local dataset="$1"
++  local pred_len="$2"
++  local seed="$3"
++  local gpu="$4"
++  local batch="$5"
++  local log="$LOG_ROOT/baseline_${dataset}_seed${seed}_gpu${gpu}_bs${batch}.log"
++
++  if [[ -n "$(checkpoint_for "$dataset" "$pred_len" "$seed" || true)" ]]; then
++    echo "[$(date)] baseline exists dataset=${dataset} seed=${seed}" | tee -a "$log"
++    return 0
++  fi
++
++  echo "[$(date)] start baseline dataset=${dataset} pred_len=${pred_len} seed=${seed} gpu=${gpu} batch=${batch}" | tee "$log"
++  set +e
++  CUDA_VISIBLE_DEVICES="$gpu" PYTHONUNBUFFERED=1 python -u ./src/experiments/TimeDiff.py \
++    --dataset_type="$dataset" \
++    --device="cuda:0" \
++    --batch_size="$batch" \
++    --data_path="./data" \
++    --num_worker="$NUM_WORKERS" \
++    --horizon="$HORIZON" \
++    --pred_len="$pred_len" \
++    --windows="$WINDOWS" \
++    --epochs="$EPOCHS" \
++    --patience="$PATIENCE" \
++    --num_steps="$NUM_STEPS" \
++    --beta_start="$BETA_START" \
++    --beta_end="$BETA_END" \
++    --schedule="$SCHEDULE" \
++    runs --seeds="[$seed]" >>"$log" 2>&1
++  local status=$?
++  set -e
++  if [[ "$status" -ne 0 ]] && grep -qi 'out of memory' "$log"; then
++    return 88
++  fi
++  return "$status"
++}
++
++run_baseline() {
++  local dataset="$1"
++  local pred_len="$2"
++  local seed="$3"
++  local gpu="$4"
++  local batch status
++  for batch in "$BATCH_SIZE" 16 8 4 2 1; do
++    run_baseline_once "$dataset" "$pred_len" "$seed" "$gpu" "$batch"
++    status=$?
++    if [[ "$status" -eq 0 ]]; then
++      return 0
++    fi
++    if [[ "$status" -eq 88 ]]; then
++      echo "[$(date)] baseline OOM dataset=${dataset} seed=${seed} batch=${batch}; retry smaller" | tee -a "$LOG_ROOT/oom_retries.log"
++      continue
++    fi
++    return "$status"
++  done
++  return 88
++}
++
++run_sparc_once() {
++  local dataset="$1"
++  local pred_len="$2"
++  local seed="$3"
++  local gpu="$4"
++  local batch="$5"
++  local ckpt out_dir log
++
++  ckpt="$(checkpoint_for "$dataset" "$pred_len" "$seed" || true)"
++  out_dir="./results/sparc_pit/TimeDiff_${dataset}_w${WINDOWS}h${HORIZON}s${pred_len}_seed${seed}_fresh"
++  log="$LOG_ROOT/sparc_${dataset}_seed${seed}_gpu${gpu}_bs${batch}.log"
++
++  if [[ -z "$ckpt" ]]; then
++    echo "[$(date)] ERROR missing baseline checkpoint dataset=${dataset} seed=${seed}" | tee "$log"
++    return 1
++  fi
++  if [[ -s "$out_dir/sparc_pit_test_metrics.txt" ]]; then
++    echo "[$(date)] SPARC-PIT exists dataset=${dataset} seed=${seed}" | tee -a "$log"
++    return 0
++  fi
++
++  echo "[$(date)] start SPARC-PIT dataset=${dataset} pred_len=${pred_len} seed=${seed} gpu=${gpu} batch=${batch} checkpoint=${ckpt}" | tee "$log"
++  set +e
++  CUDA_VISIBLE_DEVICES="$gpu" PYTHONUNBUFFERED=1 python -u ./src/experiments/TimeDiff_SPARC_PIT.py \
++    --dataset_type="$dataset" \
++    --device="cuda:0" \
++    --batch_size="$batch" \
++    --data_path="./data" \
++    --num_worker="$NUM_WORKERS" \
++    --horizon="$HORIZON" \
++    --pred_len="$pred_len" \
++    --windows="$WINDOWS" \
++    --epochs="$EPOCHS" \
++    --patience="$PATIENCE" \
++    --num_steps="$NUM_STEPS" \
++    --beta_start="$BETA_START" \
++    --beta_end="$BETA_END" \
++    --schedule="$SCHEDULE" \
++    --checkpoint_dir="$ckpt" \
++    --output_dir="$out_dir" \
++    --stats_num_samples="$STATS_NUM_SAMPLES" \
++    --eval_num_samples="$EVAL_NUM_SAMPLES" \
++    --sample_chunk_size="$SAMPLE_CHUNK_SIZE" \
++    --sparc_epochs="$SPARC_EPOCHS" \
++    --sparc_patience="$SPARC_PATIENCE" \
++    --check_val_every_n_epoch="$CHECK_VAL_EVERY_N_EPOCH" \
++    --limit_train_batches="$LIMIT_TRAIN_BATCHES" \
++    --limit_pit_fit_batches="$LIMIT_PIT_FIT_BATCHES" \
++    --limit_val_batches="$LIMIT_VAL_BATCHES" \
++    --pit_warp_strength="$PIT_WARP_STRENGTH" \
++    run --seed="$seed" >>"$log" 2>&1
++  local status=$?
++  set -e
++  if [[ "$status" -ne 0 ]] && grep -qi 'out of memory' "$log"; then
++    return 88
++  fi
++  return "$status"
++}
++
++run_sparc() {
++  local dataset="$1"
++  local pred_len="$2"
++  local seed="$3"
++  local gpu="$4"
++  local batch status
++  for batch in "$BATCH_SIZE" 16 8 4 2 1; do
++    run_sparc_once "$dataset" "$pred_len" "$seed" "$gpu" "$batch"
++    status=$?
++    if [[ "$status" -eq 0 ]]; then
++      return 0
++    fi
++    if [[ "$status" -eq 88 ]]; then
++      echo "[$(date)] SPARC OOM dataset=${dataset} seed=${seed} batch=${batch}; retry smaller" | tee -a "$LOG_ROOT/oom_retries.log"
++      continue
++    fi
++    return "$status"
++  done
++  return 88
++}
++
++run_task() {
++  local task="$1"
++  local gpu="$2"
++  local dataset pred_len seed
++  IFS=: read -r dataset pred_len seed <<<"$task"
++  run_baseline "$dataset" "$pred_len" "$seed" "$gpu"
++  run_sparc "$dataset" "$pred_len" "$seed" "$gpu"
++}
++
++tasks=()
++for seed in $SEEDS; do
++  tasks+=("ETTh1:192:$seed")
++  tasks+=("ETTh2:192:$seed")
++  tasks+=("ETTm1:192:$seed")
++  tasks+=("ETTm2:192:$seed")
++  tasks+=("Electricity:192:$seed")
++  tasks+=("ExchangeRate:192:$seed")
++  tasks+=("ILI:36:$seed")
++  tasks+=("SolarEnergy:192:$seed")
++  tasks+=("Traffic:192:$seed")
++done
++
++worker() {
++  local worker_id="$1"
++  local gpu="$2"
++  local i
++  for i in "${!tasks[@]}"; do
++    if (( i % MAX_PARALLEL == worker_id )); then
++      run_task "${tasks[$i]}" "$gpu"
++    fi
++  done
++}
++
++echo "LOG_ROOT=$LOG_ROOT"
++for ((worker_id=0; worker_id<MAX_PARALLEL; worker_id++)); do
++  gpu="$worker_id"
++  worker "$worker_id" "$gpu" >"$LOG_ROOT/worker${worker_id}_gpu${gpu}.log" 2>&1 &
++done
++wait
++
++python scripts/TimeDiff/summarize_fresh_timediff_sparc_pit.py \
++  --seeds "$SEEDS" \
++  --windows "$WINDOWS" \
++  --horizon "$HORIZON" \
++  --output "$LOG_ROOT/summary_fresh_timediff_sparc_pit.csv"
++cp "$LOG_ROOT/summary_fresh_timediff_sparc_pit.csv" logs/fresh_timediff_sparc_pit_latest.csv
++
++echo "[$(date)] fresh TimeDiff/SPARC-PIT finished"
++echo "summary=$LOG_ROOT/summary_fresh_timediff_sparc_pit.csv"
+--- /dev/null
++++ b/scripts/TimeDiff/run_one_dataset_managed.sh
+@@ -0,0 +1,271 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="${ROOT:-$HOME/SPARC/NsDiff_TimeDiff_SPARC_PIT_Fresh}"
++DATASET="${1:?dataset_type is required}"
++GPU_ID="${2:?gpu id is required}"
++PRED_LEN="${3:-192}"
++SEED="${SEED:-1}"
++WINDOWS="${WINDOWS:-168}"
++HORIZON="${HORIZON:-1}"
++EPOCHS="${EPOCHS:-10}"
++PATIENCE="${PATIENCE:-5}"
++NUM_WORKERS="${NUM_WORKERS:-8}"
++NUM_STEPS="${NUM_STEPS:-20}"
++BETA_START="${BETA_START:-0.0001}"
++BETA_END="${BETA_END:-0.02}"
++SCHEDULE="${SCHEDULE:-linear}"
++SPARC_EPOCHS="${SPARC_EPOCHS:-5}"
++SPARC_PATIENCE="${SPARC_PATIENCE:-1}"
++SPARC_MIN_DELTA="${SPARC_MIN_DELTA:-0.0005}"
++CHECK_VAL_EVERY_N_EPOCH="${CHECK_VAL_EVERY_N_EPOCH:-1}"
++LIMIT_TRAIN_BATCHES="${LIMIT_TRAIN_BATCHES:-100}"
++LIMIT_PIT_FIT_BATCHES="${LIMIT_PIT_FIT_BATCHES:-100}"
++LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-20}"
++STATS_NUM_SAMPLES="${STATS_NUM_SAMPLES:-100}"
++EVAL_NUM_SAMPLES="${EVAL_NUM_SAMPLES:-100}"
++SAMPLE_CHUNK_SIZE="${SAMPLE_CHUNK_SIZE:-20}"
++PIT_FIT_NUM_SAMPLES="${PIT_FIT_NUM_SAMPLES:-100}"
++PIT_SAMPLE_BATCH_SIZE="${PIT_SAMPLE_BATCH_SIZE:-20}"
++VAL_NUM_SAMPLES="${VAL_NUM_SAMPLES:-20}"
++VAL_SAMPLE_BATCH_SIZE="${VAL_SAMPLE_BATCH_SIZE:-20}"
++VAL_FIXED_SEED="${VAL_FIXED_SEED:-2026}"
++FINAL_TEST_NUM_SAMPLES="${FINAL_TEST_NUM_SAMPLES:-100}"
++CACHE_TIMEDIFF_PREDICTIONS="${CACHE_TIMEDIFF_PREDICTIONS:-true}"
++CACHE_SORTED_SAMPLES="${CACHE_SORTED_SAMPLES:-true}"
++CACHE_DTYPE="${CACHE_DTYPE:-float16}"
++PIN_MEMORY="${PIN_MEMORY:-true}"
++PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
++PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
++RESUME="${RESUME:-auto}"
++RESUME_FROM="${RESUME_FROM:-}"
++FORCE_RESTART="${FORCE_RESTART:-false}"
++REUSE_CACHE="${REUSE_CACHE:-true}"
++REBUILD_CACHE="${REBUILD_CACHE:-false}"
++PIT_WARP_STRENGTH="${PIT_WARP_STRENGTH:-1.0}"
++BATCH_CANDIDATES="${BATCH_CANDIDATES:-16 8 4 2 1}"
++
++mkdir -p "$ROOT/.locks" "$ROOT/logs" "$ROOT/results"
++LOCK_DIR="$ROOT/.locks/timeDiff_sparc_${DATASET}"
++if mkdir "$LOCK_DIR"; then
++  echo "$$" >"$LOCK_DIR/pid"
++  trap 'rm -rf "$LOCK_DIR"' EXIT
++else
++  old_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
++  if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
++    echo "[$(date)] duplicate blocked dataset=${DATASET} live_pid=${old_pid}"
++    exit 23
++  fi
++  rm -rf "$LOCK_DIR"
++  mkdir "$LOCK_DIR"
++  echo "$$" >"$LOCK_DIR/pid"
++  trap 'rm -rf "$LOCK_DIR"' EXIT
++fi
++
++LOG_FILE="$ROOT/logs/timeDiff_sparc_${DATASET}_gpu${GPU_ID}.log"
++BASE_EPOCH_LOG="$ROOT/logs/timeDiff_epoch_loss_${DATASET}_baseline.log"
++SPARC_EPOCH_LOG="$ROOT/logs/timeDiff_epoch_loss_${DATASET}_sparc.log"
++PIT_LOG="$ROOT/logs/timeDiff_pit_fit_${DATASET}.log"
++META_FILE="$ROOT/results/run_metadata.csv"
++PEAK_FILE="$ROOT/logs/timeDiff_sparc_${DATASET}_gpu${GPU_ID}.peak"
++
++cd "$ROOT"
++source "$HOME/miniconda3/etc/profile.d/conda.sh" 2>/dev/null \
++  || source "$HOME/anaconda3/etc/profile.d/conda.sh" 2>/dev/null \
++  || source /opt/conda/etc/profile.d/conda.sh
++conda activate k2vae
++
++export PYTHONPATH=./
++export CUDA_DEVICE_ORDER=PCI_BUS_ID
++export CUDA_VISIBLE_DEVICES="$GPU_ID"
++export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
++
++if [[ ! -s "$META_FILE" ]]; then
++  echo "dataset,method,seed,gpu,batch_size,train_time_min,peak_memory_MiB,log_file" >"$META_FILE"
++fi
++
++checkpoint_for() {
++  find "results/runs/TimeDiff/${DATASET}/w${WINDOWS}h${HORIZON}s${PRED_LEN}" \
++    -type f \( -name best_model.pth -o -name model.pth \) 2>/dev/null \
++    -printf '%T@ %p\n' \
++    | sort -n \
++    | tail -n 1 \
++    | cut -d' ' -f2- \
++    | xargs -r dirname
++}
++
++start_memory_monitor() {
++  : >"$PEAK_FILE"
++  (
++    peak=0
++    while true; do
++      used="$(nvidia-smi --id="$GPU_ID" --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -n 1 | tr -d ' ' || echo 0)"
++      [[ "$used" =~ ^[0-9]+$ ]] || used=0
++      if (( used > peak )); then
++        peak="$used"
++        echo "$peak" >"$PEAK_FILE"
++      fi
++      sleep 5
++    done
++  ) &
++  MONITOR_PID=$!
++}
++
++stop_memory_monitor() {
++  if [[ -n "${MONITOR_PID:-}" ]]; then
++    kill "$MONITOR_PID" 2>/dev/null || true
++    wait "$MONITOR_PID" 2>/dev/null || true
++    MONITOR_PID=""
++  fi
++}
++
++record_meta() {
++  local method="$1"
++  local batch="$2"
++  local start_ts="$3"
++  local end_ts="$4"
++  local peak="0"
++  [[ -s "$PEAK_FILE" ]] && peak="$(cat "$PEAK_FILE")"
++  awk -v ds="$DATASET" -v m="$method" -v seed="$SEED" -v gpu="$GPU_ID" -v bs="$batch" \
++    -v s="$start_ts" -v e="$end_ts" -v peak="$peak" -v log="$LOG_FILE" \
++    'BEGIN { printf "%s,%s,%s,%s,%s,%.2f,%s,%s\n", ds,m,seed,gpu,bs,(e-s)/60.0,peak,log }' >>"$META_FILE"
++}
++
++run_baseline_once() {
++  local batch="$1"
++  echo "[$(date)] baseline_start dataset=${DATASET} gpu=${GPU_ID} batch_size=${batch}" | tee -a "$LOG_FILE"
++  local start_ts end_ts status
++  start_ts="$(date +%s)"
++  start_memory_monitor
++  set +e
++  PYTHONUNBUFFERED=1 python -u ./src/experiments/TimeDiff.py \
++    --dataset_type="$DATASET" \
++    --device="cuda:0" \
++    --batch_size="$batch" \
++    --data_path="./data" \
++    --num_worker="$NUM_WORKERS" \
++    --horizon="$HORIZON" \
++    --pred_len="$PRED_LEN" \
++    --windows="$WINDOWS" \
++    --epochs="$EPOCHS" \
++    --patience="$PATIENCE" \
++    --num_steps="$NUM_STEPS" \
++    --beta_start="$BETA_START" \
++    --beta_end="$BETA_END" \
++    --schedule="$SCHEDULE" \
++    runs --seeds="[$SEED]" >>"$LOG_FILE" 2>&1
++  status=$?
++  set -e
++  stop_memory_monitor
++  end_ts="$(date +%s)"
++  record_meta "TimeDiff" "$batch" "$start_ts" "$end_ts"
++  grep -E 'Traininng loss|Training loss|Validation loss|test_results' "$LOG_FILE" >"$BASE_EPOCH_LOG" || true
++  if [[ "$status" -ne 0 ]] && grep -qi 'out of memory' "$LOG_FILE"; then
++    return 88
++  fi
++  return "$status"
++}
++
++run_sparc_once() {
++  local batch="$1"
++  local ckpt out_dir start_ts end_ts status
++  ckpt="$(checkpoint_for || true)"
++  if [[ -z "$ckpt" ]]; then
++    echo "[$(date)] ERROR missing baseline checkpoint dataset=${DATASET}" | tee -a "$LOG_FILE"
++    return 1
++  fi
++  out_dir="./results/sparc_pit/TimeDiff_${DATASET}_w${WINDOWS}h${HORIZON}s${PRED_LEN}_seed${SEED}_managed"
++  echo "[$(date)] sparc_start dataset=${DATASET} gpu=${GPU_ID} batch_size=${batch} sample_chunk_size=${SAMPLE_CHUNK_SIZE} checkpoint=${ckpt}" | tee -a "$LOG_FILE"
++  start_ts="$(date +%s)"
++  start_memory_monitor
++  set +e
++  PYTHONUNBUFFERED=1 python -u ./src/experiments/TimeDiff_SPARC_PIT.py \
++    --dataset_type="$DATASET" \
++    --device="cuda:0" \
++    --batch_size="$batch" \
++    --data_path="./data" \
++    --num_worker="$NUM_WORKERS" \
++    --horizon="$HORIZON" \
++    --pred_len="$PRED_LEN" \
++    --windows="$WINDOWS" \
++    --epochs="$EPOCHS" \
++    --patience="$PATIENCE" \
++    --num_steps="$NUM_STEPS" \
++    --beta_start="$BETA_START" \
++    --beta_end="$BETA_END" \
++    --schedule="$SCHEDULE" \
++    --checkpoint_dir="$ckpt" \
++    --output_dir="$out_dir" \
++    --stats_num_samples="$STATS_NUM_SAMPLES" \
++    --eval_num_samples="$EVAL_NUM_SAMPLES" \
++    --sample_chunk_size="$SAMPLE_CHUNK_SIZE" \
++    --sparc_epochs="$SPARC_EPOCHS" \
++    --sparc_patience="$SPARC_PATIENCE" \
++    --sparc_min_delta="$SPARC_MIN_DELTA" \
++    --check_val_every_n_epoch="$CHECK_VAL_EVERY_N_EPOCH" \
++    --limit_train_batches="$LIMIT_TRAIN_BATCHES" \
++    --limit_pit_fit_batches="$LIMIT_PIT_FIT_BATCHES" \
++    --limit_val_batches="$LIMIT_VAL_BATCHES" \
++    --pit_fit_num_samples="$PIT_FIT_NUM_SAMPLES" \
++    --pit_sample_batch_size="$PIT_SAMPLE_BATCH_SIZE" \
++    --val_num_samples="$VAL_NUM_SAMPLES" \
++    --val_sample_batch_size="$VAL_SAMPLE_BATCH_SIZE" \
++    --val_fixed_seed="$VAL_FIXED_SEED" \
++    --final_test_num_samples="$FINAL_TEST_NUM_SAMPLES" \
++    --cache_timediff_predictions="$CACHE_TIMEDIFF_PREDICTIONS" \
++    --cache_sorted_samples="$CACHE_SORTED_SAMPLES" \
++    --cache_dtype="$CACHE_DTYPE" \
++    --pin_memory="$PIN_MEMORY" \
++    --persistent_workers="$PERSISTENT_WORKERS" \
++    --prefetch_factor="$PREFETCH_FACTOR" \
++    --resume="$RESUME" \
++    --resume_from="$RESUME_FROM" \
++    --force_restart="$FORCE_RESTART" \
++    --reuse_cache="$REUSE_CACHE" \
++    --rebuild_cache="$REBUILD_CACHE" \
++    --pit_warp_strength="$PIT_WARP_STRENGTH" \
++    run --seed="$SEED" >>"$LOG_FILE" 2>&1
++  status=$?
++  set -e
++  stop_memory_monitor
++  end_ts="$(date +%s)"
++  record_meta "TimeDiff-SPARC" "$batch" "$start_ts" "$end_ts"
++  grep -E '^\[SPARC\] epoch=' "$LOG_FILE" >"$SPARC_EPOCH_LOG" || true
++  grep -E '^\[PIT\]' "$LOG_FILE" >"$PIT_LOG" || true
++  if [[ "$status" -ne 0 ]] && grep -qi 'out of memory' "$LOG_FILE"; then
++    return 88
++  fi
++  return "$status"
++}
++
++run_with_retries() {
++  local method="$1"
++  local batch status
++  if [[ "$method" == "baseline" ]] && [[ -n "$(checkpoint_for || true)" ]]; then
++    echo "[$(date)] baseline_done dataset=${DATASET} existing_checkpoint=$(checkpoint_for)" | tee -a "$LOG_FILE"
++    return 0
++  fi
++  for batch in $BATCH_CANDIDATES; do
++    if [[ "$method" == "baseline" ]]; then
++      run_baseline_once "$batch"
++    else
++      run_sparc_once "$batch"
++    fi
++    status=$?
++    if [[ "$status" -eq 0 ]]; then
++      echo "[$(date)] ${method}_done dataset=${DATASET} batch_size=${batch}" | tee -a "$LOG_FILE"
++      return 0
++    fi
++    if [[ "$status" -eq 88 ]]; then
++      echo "[$(date)] ${method}_oom_retry dataset=${DATASET} failed_batch=${batch}" | tee -a "$LOG_FILE"
++      continue
++    fi
++    return "$status"
++  done
++  return 88
++}
++
++echo "[$(date)] managed_start dataset=${DATASET} gpu=${GPU_ID} pred_len=${PRED_LEN} seed=${SEED}" | tee "$LOG_FILE"
++run_with_retries baseline
++run_with_retries sparc
++echo "[$(date)] managed_done dataset=${DATASET} gpu=${GPU_ID}" | tee -a "$LOG_FILE"
+--- /dev/null
++++ b/scripts/TimeDiff/run_phase1_validation.sh
+@@ -0,0 +1,26 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="${ROOT:-$HOME/SPARC/NsDiff_TimeDiff_SPARC_PIT_Fresh}"
++mkdir -p "$ROOT/logs"
++cd "$ROOT"
++
++bash scripts/TimeDiff/clean_timediff_processes.sh
++
++run_one() {
++  local dataset="$1"
++  local gpu="$2"
++  local pred_len="${3:-192}"
++  bash scripts/TimeDiff/run_one_dataset_managed.sh "$dataset" "$gpu" "$pred_len"
++}
++
++run_one Electricity 0 192 &
++run_one Traffic 0 192 &
++wait
++
++python scripts/TimeDiff/collect_results_comparison.py \
++  --root "$ROOT" \
++  --datasets "ECL,Traffic" \
++  --output "$ROOT/results_comparison.csv"
++
++echo "[$(date)] phase1 validation finished: $ROOT/results_comparison.csv"
+--- /dev/null
++++ b/scripts/TimeDiff/run_phase2_all_managed.sh
+@@ -0,0 +1,40 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="${ROOT:-$HOME/SPARC/NsDiff_TimeDiff_SPARC_PIT_Fresh}"
++MAX_PER_GPU="${MAX_PER_GPU:-2}"
++mkdir -p "$ROOT/logs"
++cd "$ROOT"
++
++bash scripts/TimeDiff/clean_timediff_processes.sh
++
++run_group() {
++  local gpu="$1"
++  shift
++  local active=0
++  local item dataset pred_len
++  for item in "$@"; do
++    dataset="${item%%:*}"
++    pred_len="${item##*:}"
++    bash scripts/TimeDiff/run_one_dataset_managed.sh "$dataset" "$gpu" "$pred_len" &
++    active=$((active + 1))
++    if (( active >= MAX_PER_GPU )); then
++      wait -n
++      active=$((active - 1))
++    fi
++  done
++  wait
++}
++
++run_group 0 ETTh1:192 ETTh2:192 &
++run_group 1 ETTm1:192 ETTm2:192 &
++run_group 2 Electricity:192 ExchangeRate:192 &
++run_group 3 ILI:36 SolarEnergy:192 Traffic:192 &
++wait
++
++python scripts/TimeDiff/collect_results_comparison.py \
++  --root "$ROOT" \
++  --datasets "ETTh1,ETTh2,ETTm1,ETTm2,ECL,EXG,ILI,Solar,Traffic" \
++  --output "$ROOT/results_comparison.csv"
++
++echo "[$(date)] phase2 all datasets finished: $ROOT/results_comparison.csv"
+--- /dev/null
++++ b/scripts/TimeDiff/start_fresh_remote.sh
+@@ -0,0 +1,26 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++cd "$HOME/SPARC/NsDiff_TimeDiff_SPARC_PIT_Fresh"
++
++source "$HOME/miniconda3/etc/profile.d/conda.sh"
++conda activate k2vae
++
++export SEEDS="${SEEDS:-1 2 3}"
++export LIMIT_TRAIN_BATCHES="${LIMIT_TRAIN_BATCHES:-100}"
++export LIMIT_PIT_FIT_BATCHES="${LIMIT_PIT_FIT_BATCHES:-100}"
++export LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-100}"
++export SPARC_EPOCHS="${SPARC_EPOCHS:-10}"
++export SPARC_PATIENCE="${SPARC_PATIENCE:-5}"
++export CHECK_VAL_EVERY_N_EPOCH="${CHECK_VAL_EVERY_N_EPOCH:-1}"
++export NUM_WORKERS="${NUM_WORKERS:-8}"
++export MAX_PARALLEL="${MAX_PARALLEL:-2}"
++export SAMPLE_CHUNK_SIZE="${SAMPLE_CHUNK_SIZE:-20}"
++export LOG_ROOT="${LOG_ROOT:-$PWD/logs/fresh_timediff_sparc_pit_$(date +%Y%m%d_%H%M%S)}"
++
++mkdir -p "$LOG_ROOT"
++nohup bash scripts/TimeDiff/run_fresh_timediff_sparc_pit_all.sh > "$LOG_ROOT/launcher.log" 2>&1 &
++pid=$!
++echo "$pid" > "$LOG_ROOT/launcher.pid"
++echo "$LOG_ROOT"
++echo "$pid"
+--- /dev/null
++++ b/scripts/TimeDiff/stop_clean_fresh_remote.sh
+@@ -0,0 +1,23 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT="$HOME/SPARC/NsDiff_TimeDiff_SPARC_PIT_Fresh"
++
++while read -r pid cmd; do
++  if [[ "$cmd" == *"$ROOT"* ]] && [[ "$cmd" != *"stop_clean_fresh_remote.sh"* ]]; then
++    kill "$pid" 2>/dev/null || true
++  fi
++done < <(ps -u "$USER" -o pid=,args=)
++
++sleep 3
++
++while read -r pid cmd; do
++  if [[ "$cmd" == *"$ROOT"* ]] && [[ "$cmd" != *"stop_clean_fresh_remote.sh"* ]]; then
++    kill -9 "$pid" 2>/dev/null || true
++  fi
++done < <(ps -u "$USER" -o pid=,args=)
++
++cd "$ROOT"
++rm -rf results/runs/TimeDiff results/runs/TimeDiff_SPARC_PIT results/sparc_pit
++mkdir -p results logs
++echo "cleaned $ROOT"
+--- /dev/null
++++ b/scripts/TimeDiff/summarize_fresh_timediff_sparc_pit.py
+@@ -0,0 +1,140 @@
++#!/usr/bin/env python3
++from __future__ import annotations
++
++import argparse
++import ast
++import csv
++from pathlib import Path
++
++
++DATASETS = [
++    ("ETTh1", "ETTh1", 192),
++    ("ETTh2", "ETTh2", 192),
++    ("ETTm1", "ETTm1", 192),
++    ("ETTm2", "ETTm2", 192),
++    ("ECL", "Electricity", 192),
++    ("EXG", "ExchangeRate", 192),
++    ("ILI", "ILI", 36),
++    ("Solar", "SolarEnergy", 192),
++    ("Traffic", "Traffic", 192),
++]
++
++
++def parse_last_metrics_from_log(path: Path) -> dict[str, float] | None:
++    if not path.exists():
++        return None
++    found = None
++    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
++        marker = "test_results:"
++        if marker not in line:
++            continue
++        try:
++            found = ast.literal_eval(line.split(marker, 1)[1].strip())
++        except (SyntaxError, ValueError):
++            continue
++    return found
++
++
++def parse_metrics_file(path: Path) -> dict[str, float] | None:
++    if not path.exists():
++        return None
++    lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip()]
++    if not lines:
++        return None
++    try:
++        return ast.literal_eval(lines[-1])
++    except (SyntaxError, ValueError):
++        return None
++
++
++def latest_baseline(root: Path, dataset: str, windows: int, horizon: int, pred_len: int, seed: int):
++    run_root = root / "results" / "runs" / "TimeDiff" / dataset / f"w{windows}h{horizon}s{pred_len}" / str(seed)
++    logs = sorted(run_root.glob("**/output.log"), key=lambda p: p.stat().st_mtime if p.exists() else 0)
++    for log in reversed(logs):
++        metrics = parse_last_metrics_from_log(log)
++        if metrics:
++            return log.parent, metrics
++    return None, None
++
++
++def latest_sparc(root: Path, dataset: str, windows: int, horizon: int, pred_len: int, seed: int):
++    path = (
++        root
++        / "results"
++        / "sparc_pit"
++        / f"TimeDiff_{dataset}_w{windows}h{horizon}s{pred_len}_seed{seed}_fresh"
++        / "sparc_pit_test_metrics.txt"
++    )
++    metrics = parse_metrics_file(path)
++    if metrics:
++        return path.parent, metrics
++    return None, None
++
++
++def metric_row(label: str, dataset: str, seed: int, method: str, path: Path | None, metrics: dict[str, float] | None):
++    row = {
++        "dataset": label,
++        "dataset_type": dataset,
++        "seed": seed,
++        "method": method,
++        "status": "ok" if metrics else "missing",
++        "crps": "",
++        "qice": "",
++        "mse": "",
++        "mae": "",
++        "rmse": "",
++        "path": str(path) if path else "",
++    }
++    if metrics:
++        for key in ("crps", "qice", "mse", "mae", "rmse"):
++            row[key] = metrics.get(key, "")
++    return row
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--root", type=Path, default=Path.cwd())
++    parser.add_argument("--seeds", default="1 2 3")
++    parser.add_argument("--windows", type=int, default=168)
++    parser.add_argument("--horizon", type=int, default=1)
++    parser.add_argument("--output", type=Path, required=True)
++    args = parser.parse_args()
++
++    seeds = [int(seed) for seed in args.seeds.replace(",", " ").split()]
++    rows = []
++    for seed in seeds:
++        for label, dataset, pred_len in DATASETS:
++            base_path, base_metrics = latest_baseline(args.root, dataset, args.windows, args.horizon, pred_len, seed)
++            sparc_path, sparc_metrics = latest_sparc(args.root, dataset, args.windows, args.horizon, pred_len, seed)
++            rows.append(metric_row(label, dataset, seed, "TimeDiff", base_path, base_metrics))
++            rows.append(metric_row(label, dataset, seed, "TimeDiff-SPARC-PIT", sparc_path, sparc_metrics))
++            if base_metrics and sparc_metrics:
++                rows.append(
++                    {
++                        "dataset": label,
++                        "dataset_type": dataset,
++                        "seed": seed,
++                        "method": "delta(SPARC-PIT - TimeDiff)",
++                        "status": "ok",
++                        "crps": sparc_metrics["crps"] - base_metrics["crps"],
++                        "qice": sparc_metrics["qice"] - base_metrics["qice"],
++                        "mse": sparc_metrics["mse"] - base_metrics["mse"],
++                        "mae": sparc_metrics["mae"] - base_metrics["mae"],
++                        "rmse": sparc_metrics["rmse"] - base_metrics["rmse"],
++                        "path": "",
++                    }
++                )
++
++    args.output.parent.mkdir(parents=True, exist_ok=True)
++    with args.output.open("w", newline="", encoding="utf-8") as f:
++        writer = csv.DictWriter(
++            f,
++            fieldnames=["dataset", "dataset_type", "seed", "method", "status", "crps", "qice", "mse", "mae", "rmse", "path"],
++        )
++        writer.writeheader()
++        writer.writerows(rows)
++    print(args.output)
++
++
++if __name__ == "__main__":
++    main()
+--- a/src/experiments/TimeDiff.py
++++ b/src/experiments/TimeDiff.py
+@@ -28,12 +28,12 @@
+ class TimeDiffParameters:
+ 
+     beta_start: float =  0.0001
+-    beta_end: float =  0.5
+-    num_steps: int =  100
++    beta_end: float =  0.02
++    num_steps: int =  20
+     vis_ar_part: int =  0
+     num_samples :int = 100
+     vis_MTS_analysis: int =  1
+-    schedule:  str = "quad"
++    schedule:  str = "linear"
+     use_window_normalization: bool = True
+     t0: float =  1e-4
+     T: float =  1
+@@ -78,7 +78,10 @@
+             "num_vars" : self.dataset.num_features,
+             "freq" : self.dataset.freq,
+             "interval" : self.num_steps,
++            "beta_start": self.beta_start,
+             "beta-max": self.beta_end,
++            "beta_end": self.beta_end,
++            "schedule": self.schedule,
+             "use_window_normalization": self.use_window_normalization,
+             "t0": self.t0,
+             "T": self.T,
+@@ -224,4 +227,4 @@
+ if __name__ == "__main__":
+     import fire
+     # torch.multiprocessing.set_start_method('spawn')# good solution !!!!
+-    fire.Fire(TimeDiffForecast)
+\ No newline at end of file
++    fire.Fire(TimeDiffForecast)
+--- /dev/null
++++ b/src/experiments/TimeDiff_SPARC_PIT.py
+@@ -0,0 +1,864 @@
++from __future__ import annotations
++
++from dataclasses import dataclass
++import hashlib
++import os
++from pathlib import Path
++import subprocess
++from typing import Dict, List
++
++import numpy as np
++import torch
++from tqdm import tqdm
++
++from src.experiments.TimeDiff import TimeDiffForecast
++from src.sparc_pit import SampleSPARCCalibrator, PITWarpCalibrator, augment_context
++from src.sparc_pit.pit_warp import compute_sample_pit, qice_from_pit
++
++
++def _torch_load(path: Path, device: str):
++    try:
++        return torch.load(path, map_location=device, weights_only=True)
++    except TypeError:
++        return torch.load(path, map_location=device)
++
++
++@dataclass
++class TimeDiffSPARCPITForecast(TimeDiffForecast):
++    model_type: str = "TimeDiff_SPARC_PIT"
++
++    checkpoint_dir: str = ""
++    output_dir: str = "./results/sparc_pit"
++    stats_num_samples: int = 100
++    eval_num_samples: int = 100
++    sample_chunk_size: int = 20
++
++    sparc_epochs: int = 5
++    sparc_patience: int = 1
++    sparc_min_delta: float = 0.0005
++    check_val_every_n_epoch: int = 1
++    sparc_learning_rate: float = 0.001
++    sparc_hidden_dim: int = 128
++
++    calibration_strength: float = 0.4
++    mean_correction: bool = False
++    max_mean_delta: float = 0.0
++    max_log_scale_delta: float = 0.4
++    sparc_nll_weight: float = 0.5
++    sparc_quantile_weight: float = 0.5
++    sparc_pit_weight: float = 40.0
++    sparc_pit_temperature: float = 0.01
++
++    pit_warp_fit_split: str = "train"
++    pit_warp_knots: int = 41
++    pit_warp_strength: float = 1.0
++    max_pit_fit_points: int = 2_000_000
++
++    limit_train_batches: int = 100
++    limit_pit_fit_batches: int = 100
++    limit_val_batches: int = 20
++    pit_fit_num_samples: int = 100
++    pit_sample_batch_size: int = 20
++    val_num_samples: int = 20
++    val_sample_batch_size: int = 20
++    val_fixed_seed: int = 2026
++    final_test_num_samples: int = 100
++    cache_timediff_predictions: bool = True
++    cache_sorted_samples: bool = True
++    cache_dtype: str = "float16"
++    pin_memory: bool = True
++    persistent_workers: bool = True
++    prefetch_factor: int = 4
++    resume: str = "auto"
++    resume_from: str = ""
++    force_restart: bool = False
++    reuse_cache: bool = True
++    rebuild_cache: bool = False
++
++    jitter_std: float = 0.01
++    scaling_std: float = 0.05
++    time_mask_ratio: float = 0.05
++
++    @staticmethod
++    def _resolve_model_path(root: Path) -> Path:
++        for filename in ("best_model.pth", "model.pth"):
++            path = root / filename
++            if path.exists():
++                return path
++        raise FileNotFoundError(f"Missing model checkpoint under {root}")
++
++    def _dataset_label(self) -> str:
++        return {
++            "Electricity": "ECL",
++            "ExchangeRate": "EXG",
++            "SolarEnergy": "Solar",
++        }.get(self.dataset_type, self.dataset_type)
++
++    def _checkpoint_root(self) -> Path:
++        return Path("checkpoints") / f"timeDiff_sparc_{self._dataset_label()}"
++
++    def _default_last_checkpoint(self) -> Path:
++        return self._checkpoint_root() / "last.pt"
++
++    def _timediff_checkpoint_path(self) -> str:
++        return str(self._resolve_model_path(Path(self.checkpoint_dir).expanduser()))
++
++    def _file_hash(self, path: Path) -> str:
++        digest = hashlib.sha1()
++        with path.open("rb") as f:
++            for chunk in iter(lambda: f.read(1024 * 1024), b""):
++                digest.update(chunk)
++        return digest.hexdigest()
++
++    def _timediff_checkpoint_hash(self) -> str:
++        return self._file_hash(Path(self._timediff_checkpoint_path()))
++
++    def _compat_signature(self) -> Dict[str, object]:
++        return {
++            "version": "timediff_sparc_pit_resume_v1",
++            "prediction_length": self.pred_len,
++            "feature_dimension": self.dataset.num_features,
++            "sparc_hidden_dim": self.sparc_hidden_dim,
++            "calibration_strength": self.calibration_strength,
++            "mean_correction": self.mean_correction,
++            "max_mean_delta": self.max_mean_delta,
++            "max_log_scale_delta": self.max_log_scale_delta,
++            "sparc_nll_weight": self.sparc_nll_weight,
++            "sparc_quantile_weight": self.sparc_quantile_weight,
++            "sparc_pit_weight": self.sparc_pit_weight,
++            "sparc_pit_temperature": self.sparc_pit_temperature,
++            "jitter_std": self.jitter_std,
++            "scaling_std": self.scaling_std,
++            "time_mask_ratio": self.time_mask_ratio,
++            "stats_num_samples": self.stats_num_samples,
++            "pit_fit_num_samples": self.pit_fit_num_samples,
++            "loss_inputs": "base_aug_target_samples",
++        }
++
++    def _load_frozen_checkpoint(self) -> None:
++        if not self.checkpoint_dir:
++            raise ValueError("--checkpoint_dir is required")
++        root = Path(self.checkpoint_dir).expanduser()
++        self.model.load_state_dict(_torch_load(self._resolve_model_path(root), self.device))
++        self.model.eval()
++        for parameter in self.model.parameters():
++            parameter.requires_grad = False
++
++    def _apply_loader_runtime_options(self) -> None:
++        for loader in (getattr(self, "train_loader", None), getattr(self, "val_loader", None), getattr(self, "test_loader", None)):
++            if loader is None:
++                continue
++            for name, value in (
++                ("pin_memory", self.pin_memory),
++                ("persistent_workers", self.persistent_workers and self.num_worker > 0),
++                ("prefetch_factor", self.prefetch_factor if self.num_worker > 0 else None),
++            ):
++                try:
++                    setattr(loader, name, value)
++                except Exception:
++                    pass
++
++    @staticmethod
++    def _as_bool(value) -> bool:
++        if isinstance(value, bool):
++            return value
++        if isinstance(value, str):
++            return value.strip().lower() in {"1", "true", "yes", "y", "on"}
++        return bool(value)
++
++    def _normalize_runtime_flags(self) -> None:
++        self.cache_timediff_predictions = self._as_bool(self.cache_timediff_predictions)
++        self.cache_sorted_samples = self._as_bool(self.cache_sorted_samples)
++        self.pin_memory = self._as_bool(self.pin_memory)
++        self.persistent_workers = self._as_bool(self.persistent_workers)
++        self.force_restart = self._as_bool(self.force_restart)
++        self.reuse_cache = self._as_bool(self.reuse_cache)
++        self.rebuild_cache = self._as_bool(self.rebuild_cache)
++        self._cache_hits = 0
++        self._cache_misses = 0
++
++    def _stable_cache_prefix(self, split: str, step: int, suffix: str = "") -> str:
++        base = f"{split}_step{int(step)}"
++        return f"{base}_{suffix}" if suffix else base
++
++    def _seeded_augment_context(self, batch_x: torch.Tensor, cache_prefix: str = None) -> torch.Tensor:
++        if not cache_prefix:
++            return augment_context(
++                batch_x,
++                jitter_std=self.jitter_std,
++                scaling_std=self.scaling_std,
++                time_mask_ratio=self.time_mask_ratio,
++            )
++        previous_state = torch.random.get_rng_state()
++        if torch.cuda.is_available():
++            previous_cuda_state = torch.cuda.get_rng_state_all()
++        torch.manual_seed(self._seed_for_cache_key(f"{cache_prefix}_augment"))
++        if torch.cuda.is_available():
++            torch.cuda.manual_seed_all(self._seed_for_cache_key(f"{cache_prefix}_augment"))
++        augmented = augment_context(
++            batch_x,
++            jitter_std=self.jitter_std,
++            scaling_std=self.scaling_std,
++            time_mask_ratio=self.time_mask_ratio,
++        )
++        torch.random.set_rng_state(previous_state)
++        if torch.cuda.is_available():
++            torch.cuda.set_rng_state_all(previous_cuda_state)
++        return augmented
++
++    def _gpu_status(self) -> Dict[str, object]:
++        status: Dict[str, object] = {
++            "gpu_id": os.environ.get("CUDA_VISIBLE_DEVICES", str(self.device)),
++            "memory_allocated_MiB": None,
++            "memory_reserved_MiB": None,
++            "gpu_utilization_pct": None,
++        }
++        if torch.cuda.is_available():
++            status["memory_allocated_MiB"] = round(torch.cuda.memory_allocated() / 1024 / 1024, 2)
++            status["memory_reserved_MiB"] = round(torch.cuda.memory_reserved() / 1024 / 1024, 2)
++        try:
++            result = subprocess.run(
++                [
++                    "nvidia-smi",
++                    "--query-gpu=utilization.gpu",
++                    "--format=csv,noheader,nounits",
++                    "--id",
++                    str(status["gpu_id"]).split(",")[0],
++                ],
++                check=False,
++                capture_output=True,
++                text=True,
++                timeout=5,
++            )
++            if result.returncode == 0 and result.stdout.strip():
++                status["gpu_utilization_pct"] = int(result.stdout.strip().splitlines()[0].strip())
++        except Exception:
++            pass
++        return status
++
++    def _log_gpu_status(self, prefix: str) -> None:
++        status = self._gpu_status()
++        print(
++            f"[GPU] {prefix} gpu_id={status['gpu_id']} "
++            f"memory_allocated_MiB={status['memory_allocated_MiB']} "
++            f"memory_reserved_MiB={status['memory_reserved_MiB']} "
++            f"gpu_utilization_pct={status['gpu_utilization_pct']}",
++            flush=True,
++        )
++
++    def _count_cache_hit(self) -> None:
++        self._cache_hits = getattr(self, "_cache_hits", 0) + 1
++
++    def _count_cache_miss(self) -> None:
++        self._cache_misses = getattr(self, "_cache_misses", 0) + 1
++
++    def _target(self, batch_y: torch.Tensor) -> torch.Tensor:
++        return batch_y[:, -self.pred_len :, :].to(self.device).float()
++
++    def _sample_timediff_uncached(
++        self,
++        batch_x: torch.Tensor,
++        batch_y: torch.Tensor,
++        batch_x_mark: torch.Tensor,
++        batch_y_mark: torch.Tensor,
++        num_samples: int,
++        sample_batch_size: int = None,
++    ) -> torch.Tensor:
++        pieces = []
++        remaining = int(num_samples)
++        chunk_size = max(1, int(sample_batch_size or self.sample_chunk_size))
++        self.model.eval()
++        while remaining > 0:
++            current = min(chunk_size, remaining)
++            outs, _x, _y, _unused_1, _unused_2 = self.model(
++                batch_x,
++                batch_x_mark,
++                batch_y,
++                batch_y_mark,
++                None,
++                None,
++                None,
++                current,
++            )
++            if outs.ndim != 4:
++                raise ValueError(f"Expected TimeDiff output [B, N, H, C], got {tuple(outs.shape)}")
++            pieces.append(outs.detach())
++            remaining -= current
++        samples = torch.cat(pieces, dim=1)
++        expected_tail = (self.pred_len, self.dataset.num_features)
++        if tuple(samples.shape[2:]) != expected_tail:
++            raise ValueError(f"Expected sample tail {expected_tail}, got {tuple(samples.shape[2:])}")
++        return samples
++
++    def _cache_file_for(self, cache_key: str, num_samples: int) -> Path:
++        safe_key = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()
++        return self._prediction_cache_root / f"{safe_key}_n{num_samples}.pt"
++
++    def _cache_data_split(self, cache_key: str) -> str:
++        if cache_key.startswith("train_"):
++            return "train"
++        if cache_key.startswith("val_"):
++            return "val"
++        if cache_key.startswith("pit_"):
++            return self.pit_warp_fit_split
++        if cache_key.startswith("test_"):
++            return "test"
++        return "unknown"
++
++    def _cache_metadata(self, cache_key: str, num_samples: int) -> Dict[str, object]:
++        return {
++            "dataset": self._dataset_label(),
++            "data_split": self._cache_data_split(cache_key),
++            "timediff_checkpoint_path": self._timediff_checkpoint_path(),
++            "timediff_checkpoint_hash": self._timediff_checkpoint_hash(),
++            "seed": self.val_fixed_seed if cache_key.startswith("val_") else None,
++            "pit_fit_num_samples": self.pit_fit_num_samples,
++            "limit_pit_fit_batches": self.limit_pit_fit_batches,
++            "prediction_length": self.pred_len,
++            "feature_dimension": self.dataset.num_features,
++            "cache_dtype": self.cache_dtype,
++            "num_samples": int(num_samples),
++        }
++
++    def _cache_matches(self, cached: object, expected: Dict[str, object]) -> tuple[bool, str]:
++        if not isinstance(cached, dict) or "metadata" not in cached or "samples" not in cached:
++            return False, "legacy cache without metadata"
++        metadata = cached["metadata"]
++        for key, value in expected.items():
++            if metadata.get(key) != value:
++                return False, f"metadata mismatch {key}: cached={metadata.get(key)} expected={value}"
++        return True, ""
++
++    def _seed_for_cache_key(self, cache_key: str) -> int:
++        key_hash = int(hashlib.sha1(cache_key.encode("utf-8")).hexdigest()[:8], 16)
++        return int(self.val_fixed_seed + key_hash) % (2**31 - 1)
++
++    def _to_cache_dtype(self, tensor: torch.Tensor) -> torch.Tensor:
++        if self.cache_dtype == "float16":
++            return tensor.detach().cpu().to(torch.float16)
++        if self.cache_dtype == "bfloat16":
++            return tensor.detach().cpu().to(torch.bfloat16)
++        return tensor.detach().cpu().float()
++
++    def _sample_timediff_cached(
++        self,
++        cache_key: str,
++        batch_x: torch.Tensor,
++        batch_y: torch.Tensor,
++        batch_x_mark: torch.Tensor,
++        batch_y_mark: torch.Tensor,
++        num_samples: int,
++        sample_batch_size: int = None,
++    ) -> torch.Tensor:
++        if not self.cache_timediff_predictions:
++            return self._sample_timediff_uncached(batch_x, batch_y, batch_x_mark, batch_y_mark, num_samples, sample_batch_size)
++        path = self._cache_file_for(cache_key, num_samples)
++        expected_metadata = self._cache_metadata(cache_key, num_samples)
++        if self.reuse_cache and not self.rebuild_cache and path.exists():
++            cached = _torch_load(path, "cpu")
++            matches, reason = self._cache_matches(cached, expected_metadata)
++            if matches:
++                self._count_cache_hit()
++                print(f"[CACHE HIT] dataset={self._dataset_label()}, cache={path}", flush=True)
++                return cached["samples"].to(self.device).float()
++            self._count_cache_miss()
++            print(f"[CACHE MISS] dataset={self._dataset_label()}, reason={reason}, cache={path}", flush=True)
++        elif path.exists() and self.rebuild_cache:
++            self._count_cache_miss()
++            print(f"[CACHE MISS] dataset={self._dataset_label()}, reason=rebuild_cache requested, cache={path}", flush=True)
++        else:
++            self._count_cache_miss()
++            print(f"[CACHE MISS] dataset={self._dataset_label()}, reason=missing cache, cache={path}", flush=True)
++        previous_state = torch.random.get_rng_state()
++        if torch.cuda.is_available():
++            previous_cuda_state = torch.cuda.get_rng_state_all()
++        torch.manual_seed(self._seed_for_cache_key(cache_key))
++        if torch.cuda.is_available():
++            torch.cuda.manual_seed_all(self._seed_for_cache_key(cache_key))
++        samples = self._sample_timediff_uncached(batch_x, batch_y, batch_x_mark, batch_y_mark, num_samples, sample_batch_size)
++        torch.random.set_rng_state(previous_state)
++        if torch.cuda.is_available():
++            torch.cuda.set_rng_state_all(previous_cuda_state)
++        stored = samples
++        if self.cache_sorted_samples:
++            stored = torch.sort(stored, dim=1).values
++        path.parent.mkdir(parents=True, exist_ok=True)
++        torch.save({"metadata": expected_metadata, "samples": self._to_cache_dtype(stored)}, path)
++        print(f"[cache] write key={cache_key} samples={num_samples} dtype={self.cache_dtype}", flush=True)
++        return samples
++
++    def _sample_timediff(
++        self,
++        batch_x: torch.Tensor,
++        batch_y: torch.Tensor,
++        batch_x_mark: torch.Tensor,
++        batch_y_mark: torch.Tensor,
++        num_samples: int,
++        sample_batch_size: int = None,
++        cache_key: str = None,
++    ) -> torch.Tensor:
++        if cache_key:
++            return self._sample_timediff_cached(
++                cache_key,
++                batch_x,
++                batch_y,
++                batch_x_mark,
++                batch_y_mark,
++                num_samples,
++                sample_batch_size,
++            )
++        return self._sample_timediff_uncached(batch_x, batch_y, batch_x_mark, batch_y_mark, num_samples, sample_batch_size)
++
++    def _make_calibrator(self) -> SampleSPARCCalibrator:
++        return SampleSPARCCalibrator(
++            prediction_length=self.pred_len,
++            target_dim=self.dataset.num_features,
++            hidden_dim=self.sparc_hidden_dim,
++            mean_correction=self.mean_correction,
++            max_mean_delta=self.max_mean_delta,
++            max_log_scale_delta=self.max_log_scale_delta,
++            calibration_strength=self.calibration_strength,
++            nll_weight=self.sparc_nll_weight,
++            quantile_weight=self.sparc_quantile_weight,
++            pit_weight=self.sparc_pit_weight,
++            pit_temperature=self.sparc_pit_temperature,
++        ).to(self.device)
++
++    def _sparc_batch_loss(
++        self,
++        batch_x,
++        batch_y,
++        batch_x_mark,
++        batch_y_mark,
++        cache_prefix: str = None,
++        num_samples: int = None,
++        sample_batch_size: int = None,
++    ) -> torch.Tensor:
++        target = self._target(batch_y)
++        samples = int(num_samples or self.stats_num_samples)
++        with torch.no_grad():
++            base_stats = self._sample_timediff(
++                batch_x,
++                batch_y,
++                batch_x_mark,
++                batch_y_mark,
++                samples,
++                sample_batch_size,
++                f"{cache_prefix}_base" if cache_prefix else None,
++            )
++            aug_x = self._seeded_augment_context(batch_x, cache_prefix)
++            aug_stats = self._sample_timediff(
++                aug_x,
++                batch_y,
++                batch_x_mark,
++                batch_y_mark,
++                samples,
++                sample_batch_size,
++                f"{cache_prefix}_aug" if cache_prefix else None,
++            )
++        return self.sparc_calibrator.loss(base_stats, aug_stats, target)
++
++    def _iter_limited_loader(self, loader, limit: int):
++        for step, batch in enumerate(loader, start=1):
++            if limit > 0 and step > limit:
++                break
++            yield step, batch
++
++    def _validate_sparc(self) -> tuple[float, Dict[str, float]]:
++        self.sparc_calibrator.eval()
++        losses = []
++        self.metrics.reset()
++        torch.manual_seed(self.val_fixed_seed)
++        np.random.seed(self.val_fixed_seed)
++        with torch.no_grad():
++            for step, (batch_x, batch_y, _origin_x, _origin_y, batch_x_mark, batch_y_mark) in self._iter_limited_loader(
++                self.val_loader,
++                self.limit_val_batches,
++            ):
++                batch_x = batch_x.to(self.device).float()
++                batch_y = batch_y.to(self.device).float()
++                batch_x_mark = batch_x_mark.to(self.device).float()
++                batch_y_mark = batch_y_mark.to(self.device).float()
++                loss = self._sparc_batch_loss(
++                    batch_x,
++                    batch_y,
++                    batch_x_mark,
++                    batch_y_mark,
++                    cache_prefix=f"val_seed{self.val_fixed_seed}_step{step}",
++                    num_samples=self.val_num_samples,
++                    sample_batch_size=self.val_sample_batch_size,
++                )
++                losses.append(float(loss.detach().cpu()))
++                samples = self._process_eval_batch(
++                    batch_x,
++                    batch_y,
++                    batch_x_mark,
++                    batch_y_mark,
++                    step=step,
++                    phase="val",
++                )[0]
++                target = self._target(batch_y)
++                self.metrics.update(samples.contiguous().cpu().detach(), target.contiguous().cpu().detach())
++        metrics = {name: float(metric.compute()) for name, metric in self.metrics.items()} if losses else {}
++        return (float(np.mean(losses)) if losses else float("inf")), metrics
++
++    def _train_sparc_head(self, output_root: Path) -> Path:
++        self.sparc_calibrator = self._make_calibrator()
++        optimizer = torch.optim.Adam(self.sparc_calibrator.parameters(), lr=self.sparc_learning_rate)
++        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _epoch: 1.0)
++        best_path = output_root / "sparc_calibrator.pt"
++        last_path = self._default_last_checkpoint()
++        last_path.parent.mkdir(parents=True, exist_ok=True)
++        best_loss = float("inf")
++        bad_epochs = 0
++        start_epoch = 0
++
++        resume_state = self._load_resume_checkpoint(optimizer, scheduler)
++        if resume_state is not None:
++            start_epoch = int(resume_state["epoch"]) + 1
++            best_loss = float(resume_state["best_val_loss"])
++            bad_epochs = int(resume_state["bad_epochs"])
++        if start_epoch >= self.sparc_epochs:
++            print(
++                f"[RESUME] dataset={self._dataset_label()}, checkpoint={resume_state['checkpoint']}, "
++                f"start_epoch={start_epoch} already_complete=true",
++                flush=True,
++            )
++            if best_path.exists():
++                state = _torch_load(best_path, self.device)
++                self.sparc_calibrator.load_state_dict(state["state_dict"])
++            self.sparc_calibrator.eval()
++            return best_path
++
++        for epoch in range(start_epoch, self.sparc_epochs):
++            display_epoch = epoch + 1
++            self.sparc_calibrator.train()
++            losses = []
++            epoch_cache_hits = getattr(self, "_cache_hits", 0)
++            epoch_cache_misses = getattr(self, "_cache_misses", 0)
++            self._log_gpu_status(f"epoch_start dataset={self._dataset_label()} epoch={display_epoch}")
++            with tqdm(total=self.limit_train_batches, desc=f"SPARC epoch {display_epoch}") as progress_bar:
++                for step, (batch_x, batch_y, _origin_x, _origin_y, batch_x_mark, batch_y_mark) in self._iter_limited_loader(
++                    self.train_loader,
++                    self.limit_train_batches,
++                ):
++                    batch_x = batch_x.to(self.device).float()
++                    batch_y = batch_y.to(self.device).float()
++                    batch_x_mark = batch_x_mark.to(self.device).float()
++                    batch_y_mark = batch_y_mark.to(self.device).float()
++                    loss = self._sparc_batch_loss(
++                        batch_x,
++                        batch_y,
++                        batch_x_mark,
++                        batch_y_mark,
++                        cache_prefix=self._stable_cache_prefix("train", step),
++                        num_samples=self.stats_num_samples,
++                        sample_batch_size=self.sample_chunk_size,
++                    )
++
++                    optimizer.zero_grad()
++                    loss.backward()
++                    torch.nn.utils.clip_grad_norm_(self.sparc_calibrator.parameters(), 1.0)
++                    optimizer.step()
++
++                    losses.append(float(loss.detach().cpu()))
++                    progress_bar.update(1)
++                    progress_bar.set_postfix(loss=losses[-1])
++
++            scheduler.step()
++
++            if self.check_val_every_n_epoch <= 1 or display_epoch % self.check_val_every_n_epoch == 0:
++                val_loss, val_metrics = self._validate_sparc()
++            else:
++                val_loss = best_loss
++                val_metrics = {}
++            train_loss = float(np.mean(losses)) if losses else float("nan")
++            print(
++                f"[SPARC] epoch={display_epoch} train_loss={train_loss:.6f} val_loss={val_loss:.6f} "
++                f"val_CRPS={val_metrics.get('crps')} val_QICE={val_metrics.get('qice')} "
++                f"cache_hits={getattr(self, '_cache_hits', 0) - epoch_cache_hits} "
++                f"cache_misses={getattr(self, '_cache_misses', 0) - epoch_cache_misses}",
++                flush=True,
++            )
++            self._log_gpu_status(f"epoch_end dataset={self._dataset_label()} epoch={display_epoch}")
++
++            if val_loss < best_loss - self.sparc_min_delta:
++                best_loss = val_loss
++                bad_epochs = 0
++                torch.save({"state_dict": self.sparc_calibrator.state_dict(), "best_val_loss": best_loss}, best_path)
++            else:
++                bad_epochs += 1
++                if bad_epochs >= self.sparc_patience:
++                    print(f"[SPARC] early stopping at epoch={display_epoch}", flush=True)
++                    self._save_resume_checkpoint(last_path, epoch, optimizer, scheduler, best_loss, bad_epochs)
++                    break
++
++            self._save_resume_checkpoint(last_path, epoch, optimizer, scheduler, best_loss, bad_epochs)
++
++        state = _torch_load(best_path, self.device)
++        self.sparc_calibrator.load_state_dict(state["state_dict"])
++        self.sparc_calibrator.eval()
++        return best_path
++
++    def _resume_candidate_path(self) -> Path | None:
++        if self.force_restart or self.resume == "none":
++            return None
++        if self.resume_from:
++            return Path(self.resume_from).expanduser()
++        if self.resume == "auto":
++            return self._default_last_checkpoint()
++        return None
++
++    def _load_resume_checkpoint(self, optimizer, scheduler):
++        path = self._resume_candidate_path()
++        if path is None:
++            reason = "force_restart" if self.force_restart else f"resume={self.resume}"
++            print(f"[FRESH START] dataset={self._dataset_label()}, reason={reason}", flush=True)
++            return None
++        if not path.exists():
++            print(f"[FRESH START] dataset={self._dataset_label()}, reason=missing checkpoint {path}", flush=True)
++            return None
++        state = _torch_load(path, self.device)
++        expected = self._compat_signature()
++        found = state.get("compat_signature")
++        if found != expected:
++            print(
++                f"[FRESH START] dataset={self._dataset_label()}, "
++                f"reason=incompatible checkpoint signature checkpoint={path}",
++                flush=True,
++            )
++            return None
++        try:
++            self.sparc_calibrator.load_state_dict(state["model"])
++            optimizer.load_state_dict(state["optimizer"])
++            scheduler.load_state_dict(state["scheduler"])
++        except Exception as exc:
++            print(
++                f"[FRESH START] dataset={self._dataset_label()}, "
++                f"reason=failed to load checkpoint {path}: {exc}",
++                flush=True,
++            )
++            return None
++        start_epoch = int(state["epoch"]) + 1
++        print(f"[RESUME] dataset={self._dataset_label()}, checkpoint={path}, start_epoch={start_epoch}", flush=True)
++        return {
++            "checkpoint": str(path),
++            "epoch": int(state["epoch"]),
++            "best_val_loss": float(state["best_val_loss"]),
++            "bad_epochs": int(state["bad_epochs"]),
++        }
++
++    def _save_resume_checkpoint(self, path: Path, epoch: int, optimizer, scheduler, best_loss: float, bad_epochs: int) -> None:
++        torch.save(
++            {
++                "epoch": int(epoch),
++                "model": self.sparc_calibrator.state_dict(),
++                "optimizer": optimizer.state_dict(),
++                "scheduler": scheduler.state_dict(),
++                "best_val_loss": float(best_loss),
++                "bad_epochs": int(bad_epochs),
++                "compat_signature": self._compat_signature(),
++            },
++            path,
++        )
++        print(f"[checkpoint] saved last={path} epoch={epoch}", flush=True)
++
++    def _collect_pit_values(self) -> np.ndarray:
++        loader = self.train_loader if self.pit_warp_fit_split == "train" else self.val_loader
++        limit = self.limit_pit_fit_batches if self.pit_warp_fit_split == "train" else self.limit_val_batches
++        values = []
++        total = 0
++        rng = np.random.default_rng(2027)
++        self.sparc_calibrator.eval()
++
++        with torch.no_grad():
++            for step, (batch_x, batch_y, _origin_x, _origin_y, batch_x_mark, batch_y_mark) in self._iter_limited_loader(
++                loader,
++                limit,
++            ):
++                if self.max_pit_fit_points > 0 and total >= self.max_pit_fit_points:
++                    break
++                batch_x = batch_x.to(self.device).float()
++                batch_y = batch_y.to(self.device).float()
++                batch_x_mark = batch_x_mark.to(self.device).float()
++                batch_y_mark = batch_y_mark.to(self.device).float()
++                output_samples = self._sample_timediff(
++                    batch_x,
++                    batch_y,
++                    batch_x_mark,
++                    batch_y_mark,
++                    self.pit_fit_num_samples,
++                    self.pit_sample_batch_size,
++                    f"pit_step{step}_output",
++                )
++                base_stats = self._sample_timediff(
++                    batch_x,
++                    batch_y,
++                    batch_x_mark,
++                    batch_y_mark,
++                    self.pit_fit_num_samples,
++                    self.pit_sample_batch_size,
++                    f"pit_step{step}_base",
++                )
++                aug_stats = self._sample_timediff(
++                    self._seeded_augment_context(batch_x, f"pit_step{step}"),
++                    batch_y,
++                    batch_x_mark,
++                    batch_y_mark,
++                    self.pit_fit_num_samples,
++                    self.pit_sample_batch_size,
++                    f"pit_step{step}_aug",
++                )
++                samples = self.sparc_calibrator.calibrate_samples_with_stats(output_samples, base_stats, aug_stats)
++                pit = compute_sample_pit(samples.detach().cpu().numpy(), self._target(batch_y).detach().cpu().numpy())
++                if self.max_pit_fit_points > 0 and total + pit.size > self.max_pit_fit_points:
++                    keep = self.max_pit_fit_points - total
++                    pit = pit[rng.choice(pit.size, size=keep, replace=False)]
++                values.append(pit)
++                total += pit.size
++                print(
++                    f"[PIT] fit_progress step={step}/{limit} "
++                    f"sample_batch_size={self.pit_sample_batch_size} points={total}",
++                    flush=True,
++                )
++
++        if not values:
++            raise RuntimeError("No PIT values collected")
++        return np.concatenate(values, axis=0)
++
++    def _fit_pit_warp(self, output_root: Path) -> Path:
++        pit = self._collect_pit_values()
++        before = qice_from_pit(pit, n_bins=10)
++        self.pit_warp = PITWarpCalibrator.from_pit(
++            pit,
++            n_knots=self.pit_warp_knots,
++            strength=self.pit_warp_strength,
++        )
++        after = qice_from_pit(self.pit_warp.transform_pit(pit), n_bins=10)
++        path = output_root / "pit_warp.npz"
++        np.savez(
++            path,
++            pit_knots=self.pit_warp.pit_knots,
++            uniform_knots=self.pit_warp.uniform_knots,
++            strength=np.array([self.pit_warp.strength], dtype=np.float64),
++            qice_before=np.array([before], dtype=np.float64),
++            qice_after=np.array([after], dtype=np.float64),
++        )
++        print(f"[PIT] qice_before={before:.6f} qice_after={after:.6f}", flush=True)
++        return path
++
++    def _process_eval_batch(self, batch_x, batch_y, batch_x_mark, batch_y_mark, step: int, phase: str):
++        if not hasattr(self, "sparc_calibrator"):
++            raise RuntimeError("SPARC calibrator is not initialized")
++        with torch.no_grad():
++            num_samples = self.final_test_num_samples if phase == "test" else self.val_num_samples
++            sample_batch_size = self.sample_chunk_size if phase == "test" else self.val_sample_batch_size
++            output_samples = self._sample_timediff(
++                batch_x,
++                batch_y,
++                batch_x_mark,
++                batch_y_mark,
++                num_samples,
++                sample_batch_size,
++                f"{phase}_step{step}_output",
++            )
++            base_stats = self._sample_timediff(
++                batch_x,
++                batch_y,
++                batch_x_mark,
++                batch_y_mark,
++                num_samples,
++                sample_batch_size,
++                f"{phase}_step{step}_base",
++            )
++            aug_stats = self._sample_timediff(
++                self._seeded_augment_context(batch_x, f"{phase}_step{step}"),
++                batch_y,
++                batch_x_mark,
++                batch_y_mark,
++                num_samples,
++                sample_batch_size,
++                f"{phase}_step{step}_aug",
++            )
++            samples = self.sparc_calibrator.calibrate_samples_with_stats(output_samples, base_stats, aug_stats)
++            if hasattr(self, "pit_warp"):
++                warped = self.pit_warp.warp_samples(samples.detach().cpu().numpy())
++                samples = torch.as_tensor(warped, device=self.device, dtype=output_samples.dtype)
++            return samples.permute(0, 2, 3, 1).contiguous(), self._target(batch_y)
++
++    def _process_val_batch(self, batch_x, batch_y, batch_x_mark, batch_y_mark):
++        return self._process_eval_batch(batch_x, batch_y, batch_x_mark, batch_y_mark, step=0, phase="test")
++
++    def _evaluate(self, dataloader, phase: str = "test"):
++        self.model.eval()
++        self.metrics.reset()
++        with tqdm(total=len(dataloader.dataset)) as progress_bar:
++            for step, (batch_x, batch_y, origin_x, origin_y, batch_x_date_enc, batch_y_date_enc) in enumerate(dataloader, start=1):
++                origin_y = origin_y.to(self.device)
++                batch_x = batch_x.to(self.device).float()
++                batch_y = batch_y.to(self.device).float()
++                batch_x_date_enc = batch_x_date_enc.to(self.device).float()
++                batch_y_date_enc = batch_y_date_enc.to(self.device).float()
++                preds, truths = self._process_eval_batch(
++                    batch_x,
++                    batch_y,
++                    batch_x_date_enc,
++                    batch_y_date_enc,
++                    step=step,
++                    phase=phase,
++                )
++                if self.invtrans_loss:
++                    preds = self.scaler.inverse_transform(preds)
++                    truths = origin_y
++                self.metrics.update(preds.contiguous().cpu().detach(), truths.contiguous().cpu().detach())
++                progress_bar.update(batch_x.shape[0])
++        return {name: float(metric.compute()) for name, metric in self.metrics.items()}
++
++    def _test(self) -> Dict[str, float]:
++        print("Testing .... ")
++        self.num_samples = int(self.final_test_num_samples)
++        test_result = self._evaluate(self.test_loader, phase="test")
++        self._run_print(f"test_results: {test_result}")
++        return test_result
++
++    def run(self, seed=1) -> Dict[str, float]:
++        torch.manual_seed(seed)
++        np.random.seed(seed)
++        if torch.cuda.is_available():
++            torch.cuda.manual_seed_all(seed)
++
++        self._normalize_runtime_flags()
++        self._setup_run(seed)
++        self._apply_loader_runtime_options()
++        os.makedirs(self.run_save_dir, exist_ok=True)
++        output_root = Path(self.output_dir).expanduser()
++        output_root.mkdir(parents=True, exist_ok=True)
++        cache_tag = f"{self.dataset_type}_w{self.windows}h{self.horizon}s{self.pred_len}_seed{seed}"
++        self._prediction_cache_root = output_root / "prediction_cache" / cache_tag
++
++        self._load_frozen_checkpoint()
++        self.num_samples = int(self.final_test_num_samples)
++        self.model.eval()
++
++        print(f"[checkpoint] {self.checkpoint_dir}", flush=True)
++        sparc_path = self._train_sparc_head(output_root)
++        pit_path = self._fit_pit_warp(output_root)
++        print(f"[saved] sparc={sparc_path}", flush=True)
++        print(f"[saved] pit={pit_path}", flush=True)
++
++        result = self._test()
++        metrics_path = output_root / "sparc_pit_test_metrics.txt"
++        with metrics_path.open("w", encoding="utf-8") as f:
++            f.write(str(result) + "\n")
++        print(f"[DONE] metrics={metrics_path}", flush=True)
++        return result
++
++    def runs(self, seeds: List[int] = None):
++        seeds = seeds or [1]
++        return [self.run(seed=seed) for seed in seeds]
++
++
++if __name__ == "__main__":
++    import fire
++
++    fire.Fire(TimeDiffSPARCPITForecast)
+--- a/src/experiments/prob_forecast.py
++++ b/src/experiments/prob_forecast.py
+@@ -61,8 +61,7 @@
+             }
+         )
+         self.metrics.to("cpu")
+-        ctx = mp.get_context("spawn")  # Options: 'fork', 'spawn', 'forkserver'
+-        self.task_pool = ctx.Pool(processes=32)
++        self.task_pool = None
+ 
+     def _init_dataset(self):
+         self.dataset: TimeSeriesDataset = parse_type(self.dataset_type, globals())(
+@@ -178,16 +177,12 @@
+                     preds = self.scaler.inverse_transform(preds)
+                     truths = origin_y
+                     
+-                # update_metrics(preds.contiguous().cpu().detach(), truths.contiguous().cpu().detach(), self.metrics)
+-                # if isinstance(preds, np.ndarray):
+-                #     results.append(self.task_pool.apply_async(update_metrics, (preds, truths, self.metrics)))
+-                # else:
+-                results.append(self.task_pool.apply_async(update_metrics, (preds.contiguous().cpu().detach(), truths.contiguous().cpu().detach(), self.metrics)))
++                self.metrics.update(
++                    preds.contiguous().cpu().detach(),
++                    truths.contiguous().cpu().detach(),
++                )
+                 
+                 progress_bar.update(batch_x.shape[0])
+-
+-        for result in results:
+-            result.get()  # Ensure the metric update is finished
+ 
+         result = {name: float(metric.compute()) for name, metric in self.metrics.items()}
+         return result
+--- a/src/nn/DDPM_CNNNet.py
++++ b/src/nn/DDPM_CNNNet.py
+@@ -99,9 +99,9 @@
+         self.projection1 = nn.Linear(embedding_dim, projection_dim)
+         self.projection2 = nn.Linear(projection_dim, projection_dim)
+ 
+-    def forward(self, diffusion_step):
+-
+-        x = self.embedding[diffusion_step]
++    def forward(self, diffusion_step):
++        diffusion_step = diffusion_step.long().clamp(0, self.embedding.shape[0] - 1)
++        x = self.embedding[diffusion_step]
+         # print("1", np.shape(x))
+         x = self.projection1(x)
+         # print("2", np.shape(x))
+--- a/src/nn/diffusion_worker.py
++++ b/src/nn/diffusion_worker.py
+@@ -43,9 +43,9 @@
+         self.diff_train_steps = diff_steps
+         self.diff_test_steps = diff_steps
+         
+-        self.beta_start = 1e-4 # 1e4
+-        self.beta_end = 2e-2
+-        self.beta_schedule = "cosine"
++        self.beta_start = getattr(args, "beta_start", 1e-4)
++        self.beta_end = getattr(args, "beta_end", getattr(args, "beta-max", 2e-2))
++        self.beta_schedule = getattr(args, "schedule", "linear")
+ 
+         self.v_posterior = 0.0
+         self.original_elbo_weight = 0.0
+--- /dev/null
++++ b/src/sparc_pit/__init__.py
+@@ -0,0 +1,10 @@
++from .calibration import SampleSPARCCalibrator, augment_context
++from .pit_warp import PITWarpCalibrator, compute_sample_pit, qice_from_pit
++
++__all__ = [
++    "SampleSPARCCalibrator",
++    "augment_context",
++    "PITWarpCalibrator",
++    "compute_sample_pit",
++    "qice_from_pit",
++]
+--- /dev/null
++++ b/src/sparc_pit/calibration.py
+@@ -0,0 +1,206 @@
++from __future__ import annotations
++
++from typing import Tuple
++
++import torch
++import torch.nn as nn
++
++
++def summarize_samples(samples: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
++    if samples.ndim != 4:
++        raise ValueError(f"Expected samples [B, N, H, C], got {tuple(samples.shape)}")
++    mean = samples.mean(dim=1)
++    scale = samples.std(dim=1, unbiased=samples.shape[1] > 1).clamp_min(1e-6)
++    return mean, scale
++
++
++def augmentation_residuals(
++    base_samples: torch.Tensor,
++    augmented_samples: torch.Tensor,
++) -> Tuple[torch.Tensor, torch.Tensor]:
++    base_mean, base_scale = summarize_samples(base_samples)
++    aug_mean, aug_scale = summarize_samples(augmented_samples)
++    loc_residual = torch.abs(base_mean - aug_mean)
++    scale_residual = torch.abs(
++        torch.log(base_scale.clamp_min(1e-6)) - torch.log(aug_scale.clamp_min(1e-6))
++    )
++    return loc_residual.detach(), scale_residual.detach()
++
++
++def sample_preserving_rescale(
++    samples: torch.Tensor,
++    refined_mean: torch.Tensor,
++    calibrated_scale: torch.Tensor,
++) -> torch.Tensor:
++    base_mean, base_scale = summarize_samples(samples)
++    standardized = (samples - base_mean.unsqueeze(1)) / base_scale.unsqueeze(1)
++    return refined_mean.unsqueeze(1) + standardized * calibrated_scale.unsqueeze(1)
++
++
++def augment_context(
++    x: torch.Tensor,
++    jitter_std: float = 0.01,
++    scaling_std: float = 0.05,
++    time_mask_ratio: float = 0.05,
++) -> torch.Tensor:
++    y = x.clone()
++    if jitter_std > 0:
++        y = y + torch.randn_like(y) * jitter_std
++    if scaling_std > 0:
++        scale = 1.0 + torch.randn(y.shape[0], 1, y.shape[2], device=y.device, dtype=y.dtype) * scaling_std
++        y = y * scale.clamp_min(1e-3)
++    if time_mask_ratio > 0:
++        mask = torch.rand(y.shape[0], y.shape[1], 1, device=y.device) < time_mask_ratio
++        fill = y.mean(dim=1, keepdim=True).detach()
++        y = torch.where(mask, fill.expand_as(y), y)
++    return y
++
++
++class SampleSPARCCalibrator(nn.Module):
++    def __init__(
++        self,
++        prediction_length: int,
++        target_dim: int,
++        hidden_dim: int = 128,
++        horizon_embedding_dim: int = 8,
++        mean_correction: bool = False,
++        max_mean_delta: float = 0.0,
++        max_log_scale_delta: float = 0.4,
++        calibration_strength: float = 0.4,
++        nll_weight: float = 0.5,
++        quantile_weight: float = 0.5,
++        pit_weight: float = 40.0,
++        pit_temperature: float = 0.01,
++    ):
++        super().__init__()
++        self.prediction_length = prediction_length
++        self.target_dim = target_dim
++        self.mean_correction = mean_correction
++        self.max_mean_delta = max_mean_delta
++        self.max_log_scale_delta = max_log_scale_delta
++        self.calibration_strength = calibration_strength
++        self.nll_weight = nll_weight
++        self.quantile_weight = quantile_weight
++        self.pit_weight = pit_weight
++        self.pit_temperature = pit_temperature
++
++        self.horizon_embedding = nn.Embedding(prediction_length, horizon_embedding_dim)
++        self.net = nn.Sequential(
++            nn.Linear(4 + horizon_embedding_dim, hidden_dim),
++            nn.GELU(),
++            nn.Linear(hidden_dim, hidden_dim),
++            nn.GELU(),
++            nn.Linear(hidden_dim, 2),
++        )
++        self.base_log_scale_bias = nn.Parameter(torch.zeros(prediction_length, target_dim))
++
++    def _features(
++        self,
++        mean: torch.Tensor,
++        base_scale: torch.Tensor,
++        loc_residual: torch.Tensor,
++        scale_residual: torch.Tensor,
++    ) -> torch.Tensor:
++        batch_size, horizon, target_dim = mean.shape
++        if horizon > self.prediction_length or target_dim > self.target_dim:
++            raise ValueError(
++                f"Input horizon/target_dim {(horizon, target_dim)} exceeds "
++                f"{(self.prediction_length, self.target_dim)}"
++            )
++        horizon_idx = torch.arange(horizon, device=mean.device)
++        horizon_emb = self.horizon_embedding(horizon_idx).view(1, horizon, 1, -1)
++        horizon_emb = horizon_emb.expand(batch_size, horizon, target_dim, -1)
++        scalar_features = torch.stack(
++            [
++                mean.detach(),
++                torch.log(base_scale.clamp_min(1e-6)).detach(),
++                loc_residual.detach(),
++                scale_residual.detach(),
++            ],
++            dim=-1,
++        )
++        return torch.cat([scalar_features, horizon_emb], dim=-1)
++
++    def forward(
++        self,
++        mean: torch.Tensor,
++        base_scale: torch.Tensor,
++        loc_residual: torch.Tensor,
++        scale_residual: torch.Tensor,
++    ) -> Tuple[torch.Tensor, torch.Tensor]:
++        features = self._features(mean, base_scale, loc_residual, scale_residual)
++        raw = self.net(features)
++        mean_delta = torch.tanh(raw[..., 0]) * self.max_mean_delta * base_scale.detach()
++        log_scale_delta = torch.tanh(raw[..., 1]) * self.max_log_scale_delta
++        bias = self.base_log_scale_bias[: mean.shape[1], : mean.shape[2]].unsqueeze(0)
++        refined_mean = mean + mean_delta if self.mean_correction else mean
++        calibrated_log_var = 2.0 * (torch.log(base_scale.clamp_min(1e-6)) + bias + log_scale_delta)
++        base_log_var = 2.0 * torch.log(base_scale.clamp_min(1e-6))
++        log_var = (1.0 - self.calibration_strength) * base_log_var + self.calibration_strength * calibrated_log_var
++        return refined_mean, log_var.clamp(min=-12.0, max=12.0)
++
++    def distribution_from_samples(
++        self,
++        base_stats_samples: torch.Tensor,
++        augmented_stats_samples: torch.Tensor,
++    ) -> Tuple[torch.distributions.Normal, torch.Tensor]:
++        mean, base_scale = summarize_samples(base_stats_samples)
++        loc_residual, scale_residual = augmentation_residuals(base_stats_samples, augmented_stats_samples)
++        refined_mean, log_var = self(mean, base_scale, loc_residual, scale_residual)
++        scale = torch.exp(0.5 * log_var).clamp_min(1e-6)
++        return torch.distributions.Normal(refined_mean, scale), log_var
++
++    def calibrate_samples_with_stats(
++        self,
++        samples_to_calibrate: torch.Tensor,
++        base_stats_samples: torch.Tensor,
++        augmented_stats_samples: torch.Tensor,
++    ) -> torch.Tensor:
++        dist, _log_var = self.distribution_from_samples(base_stats_samples, augmented_stats_samples)
++        return sample_preserving_rescale(samples_to_calibrate, dist.loc, dist.scale)
++
++    @staticmethod
++    def _normal_quantile_loss(dist: torch.distributions.Normal, target: torch.Tensor) -> torch.Tensor:
++        quantiles = torch.tensor(
++            [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
++            device=target.device,
++            dtype=target.dtype,
++        )
++        losses = []
++        for q in quantiles:
++            q_value = dist.icdf(q.expand_as(target))
++            error = target - q_value
++            losses.append(torch.maximum(q * error, (q - 1.0) * error))
++        return torch.stack(losses, dim=0).mean()
++
++    @staticmethod
++    def _pit_uniform_loss(
++        dist: torch.distributions.Normal,
++        target: torch.Tensor,
++        temperature: float,
++    ) -> torch.Tensor:
++        quantiles = torch.tensor(
++            [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
++            device=target.device,
++            dtype=target.dtype,
++        )
++        pit = dist.cdf(target).clamp(1e-6, 1.0 - 1e-6)
++        temperature = max(float(temperature), 1e-4)
++        coverages = [torch.sigmoid((q - pit) / temperature).mean() for q in quantiles]
++        all_coverages = [torch.zeros((), device=target.device, dtype=target.dtype)] + coverages + [
++            torch.ones((), device=target.device, dtype=target.dtype)
++        ]
++        proportions = torch.stack([all_coverages[i + 1] - all_coverages[i] for i in range(len(all_coverages) - 1)])
++        return torch.mean(torch.abs(proportions - 1.0 / proportions.numel()))
++
++    def loss(
++        self,
++        base_stats_samples: torch.Tensor,
++        augmented_stats_samples: torch.Tensor,
++        target: torch.Tensor,
++    ) -> torch.Tensor:
++        dist, _log_var = self.distribution_from_samples(base_stats_samples, augmented_stats_samples)
++        nll = -dist.log_prob(target).mean()
++        qloss = self._normal_quantile_loss(dist, target)
++        pit = self._pit_uniform_loss(dist, target, self.pit_temperature)
++        return self.nll_weight * nll + self.quantile_weight * qloss + self.pit_weight * pit
+--- /dev/null
++++ b/src/sparc_pit/pit_warp.py
+@@ -0,0 +1,89 @@
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++import numpy as np
++
++
++def qice_from_pit(pit: np.ndarray, n_bins: int = 10) -> float:
++    pit = np.asarray(pit, dtype=np.float64).reshape(-1)
++    pit = np.clip(pit, 0.0, 1.0 - 1e-12)
++    counts, _ = np.histogram(pit, bins=np.linspace(0.0, 1.0, n_bins + 1))
++    proportions = counts / max(1, pit.size)
++    return float(np.mean(np.abs(proportions - 1.0 / n_bins)))
++
++
++def compute_sample_pit(samples: np.ndarray, targets: np.ndarray) -> np.ndarray:
++    samples = np.asarray(samples, dtype=np.float64)
++    targets = np.asarray(targets, dtype=np.float64)
++    if samples.ndim != 4:
++        raise ValueError(f"Expected samples [B, N, H, C], got {samples.shape}")
++    if targets.ndim != 3:
++        raise ValueError(f"Expected targets [B, H, C], got {targets.shape}")
++    if samples.shape[0] != targets.shape[0] or samples.shape[2:] != targets.shape[1:]:
++        raise ValueError(f"Sample shape {samples.shape} is incompatible with target shape {targets.shape}")
++    return np.mean(samples <= targets[:, None, :, :], axis=1).reshape(-1)
++
++
++@dataclass
++class PITWarpCalibrator:
++    pit_knots: np.ndarray
++    uniform_knots: np.ndarray
++    strength: float = 1.0
++
++    @classmethod
++    def from_pit(cls, pit: np.ndarray, n_knots: int = 41, strength: float = 1.0) -> "PITWarpCalibrator":
++        pit = np.asarray(pit, dtype=np.float64).reshape(-1)
++        pit = np.clip(pit, 1e-6, 1.0 - 1e-6)
++        uniform_knots = np.linspace(0.0, 1.0, n_knots)
++        pit_knots = np.quantile(pit, uniform_knots)
++        pit_knots[0] = 0.0
++        pit_knots[-1] = 1.0
++        pit_knots = np.maximum.accumulate(pit_knots)
++        eps = 1e-6
++        for i in range(1, len(pit_knots)):
++            if pit_knots[i] <= pit_knots[i - 1]:
++                pit_knots[i] = min(1.0, pit_knots[i - 1] + eps)
++        pit_knots[-1] = 1.0
++        return cls(pit_knots=pit_knots, uniform_knots=uniform_knots, strength=float(strength))
++
++    def transform_pit(self, pit: np.ndarray) -> np.ndarray:
++        pit = np.asarray(pit, dtype=np.float64)
++        empirical = np.interp(pit, self.pit_knots, self.uniform_knots)
++        warped = (1.0 - self.strength) * pit + self.strength * empirical
++        return np.clip(warped, 0.0, 1.0)
++
++    def inverse_transform_uniform(self, uniform: np.ndarray) -> np.ndarray:
++        uniform = np.asarray(uniform, dtype=np.float64)
++        if self.strength >= 1.0 - 1e-12:
++            inverse = np.interp(uniform, self.uniform_knots, self.pit_knots)
++        else:
++            dense = np.linspace(0.0, 1.0, 4097)
++            mapped = np.maximum.accumulate(self.transform_pit(dense))
++            inverse = np.interp(uniform, mapped, dense)
++        return np.clip(inverse, 0.0, 1.0)
++
++    def warp_samples(self, samples: np.ndarray) -> np.ndarray:
++        samples = np.asarray(samples, dtype=np.float64)
++        if samples.ndim != 4:
++            raise ValueError(f"Expected samples [B, N, H, C], got {samples.shape}")
++        batch_size, sample_count, horizon, channels = samples.shape
++        sorted_samples = np.sort(samples, axis=1)
++        uniform_grid = (np.arange(sample_count, dtype=np.float64) + 0.5) / sample_count
++        base_grid = self.inverse_transform_uniform(uniform_grid)
++        source_index = np.clip(base_grid * (sample_count - 1), 0.0, sample_count - 1)
++        low = np.floor(source_index).astype(np.int64)
++        high = np.ceil(source_index).astype(np.int64)
++        weight = (source_index - low).reshape(1, sample_count, 1, 1)
++
++        low_values = np.take_along_axis(
++            sorted_samples,
++            np.broadcast_to(low.reshape(1, sample_count, 1, 1), (batch_size, sample_count, horizon, channels)),
++            axis=1,
++        )
++        high_values = np.take_along_axis(
++            sorted_samples,
++            np.broadcast_to(high.reshape(1, sample_count, 1, 1), (batch_size, sample_count, horizon, channels)),
++            axis=1,
++        )
++        return low_values * (1.0 - weight) + high_values * weight
+--- /dev/null
++++ b/tests/test_managed_launcher_static.py
+@@ -0,0 +1,42 @@
++from pathlib import Path
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def test_managed_launcher_uses_dataset_lock_and_required_log_name():
++    text = (ROOT / "scripts/TimeDiff/run_one_dataset_managed.sh").read_text()
++    assert 'LOCK_DIR="$ROOT/.locks/timeDiff_sparc_${DATASET}"' in text
++    assert 'mkdir "$LOCK_DIR"' in text
++    assert 'logs/timeDiff_sparc_${DATASET}_gpu${GPU_ID}.log' in text
++    assert 'CUDA_VISIBLE_DEVICES="$GPU_ID"' in text
++    for expected in [
++        'SPARC_EPOCHS="${SPARC_EPOCHS:-5}"',
++        'SPARC_PATIENCE="${SPARC_PATIENCE:-1}"',
++        'SPARC_MIN_DELTA="${SPARC_MIN_DELTA:-0.0005}"',
++        'LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-20}"',
++        'VAL_NUM_SAMPLES="${VAL_NUM_SAMPLES:-20}"',
++        'FINAL_TEST_NUM_SAMPLES="${FINAL_TEST_NUM_SAMPLES:-100}"',
++        'CACHE_TIMEDIFF_PREDICTIONS="${CACHE_TIMEDIFF_PREDICTIONS:-true}"',
++        'RESUME="${RESUME:-auto}"',
++        'REUSE_CACHE="${REUSE_CACHE:-true}"',
++    ]:
++        assert expected in text
++
++
++def test_phase1_runs_ecl_and_traffic_on_cuda0():
++    text = (ROOT / "scripts/TimeDiff/run_phase1_validation.sh").read_text()
++    assert 'run_one Electricity 0' in text
++    assert 'run_one Traffic 0' in text
++    assert '&' in text
++
++
++def test_phase2_contains_requested_gpu_assignment():
++    text = (ROOT / "scripts/TimeDiff/run_phase2_all_managed.sh").read_text()
++    for expected in [
++        'run_group 0 ETTh1:192 ETTh2:192',
++        'run_group 1 ETTm1:192 ETTm2:192',
++        'run_group 2 Electricity:192 ExchangeRate:192',
++        'run_group 3 ILI:36 SolarEnergy:192 Traffic:192',
++    ]:
++        assert expected in text
+--- /dev/null
++++ b/tests/test_timediff_sparc_pit.py
+@@ -0,0 +1,188 @@
++import numpy as np
++import torch
++
++from src.sparc_pit import PITWarpCalibrator, compute_sample_pit
++from src.experiments.TimeDiff_SPARC_PIT import TimeDiffSPARCPITForecast
++
++
++def test_pit_warp_preserves_sample_shape():
++    samples = np.arange(2 * 5 * 3 * 1, dtype=np.float64).reshape(2, 5, 3, 1)
++    pit = np.linspace(0.05, 0.95, 50)
++    warp = PITWarpCalibrator.from_pit(pit, n_knots=11, strength=1.0)
++
++    warped = warp.warp_samples(samples)
++
++    assert warped.shape == samples.shape
++
++
++def test_compute_sample_pit_shape_contract():
++    samples = np.array([[[[0.0], [2.0]], [[1.0], [3.0]]]])
++    targets = np.array([[[0.5], [4.0]]])
++
++    pit = compute_sample_pit(samples, targets)
++
++    assert pit.tolist() == [0.5, 1.0]
++
++
++def test_process_val_batch_returns_metric_layout():
++    exp = TimeDiffSPARCPITForecast.__new__(TimeDiffSPARCPITForecast)
++    exp.device = "cpu"
++    exp.pred_len = 3
++    exp.eval_num_samples = 4
++    exp.stats_num_samples = 4
++    exp.final_test_num_samples = 4
++    exp.sample_chunk_size = 2
++    exp.jitter_std = 0.0
++    exp.scaling_std = 0.0
++    exp.time_mask_ratio = 0.0
++
++    class Dataset:
++        num_features = 1
++
++    class IdentityCalibrator:
++        def calibrate_samples_with_stats(self, samples, base_stats, aug_stats):
++            return samples + 1.0
++
++    exp.dataset = Dataset()
++    exp.sparc_calibrator = IdentityCalibrator()
++
++    batch_x = torch.zeros(2, 5, 1)
++    batch_y = torch.zeros(2, 3, 1)
++    batch_mark = torch.zeros(2, 3, 1)
++
++    def fake_sample(batch_x_arg, batch_y_arg, batch_x_mark_arg, batch_y_mark_arg, num_samples, *args, **kwargs):
++        return torch.zeros(batch_x_arg.shape[0], num_samples, exp.pred_len, 1)
++
++    exp._sample_timediff = fake_sample
++
++    samples, target = exp._process_val_batch(batch_x, batch_y, batch_mark, batch_mark)
++
++    assert samples.shape == (2, 3, 1, 4)
++    assert target.shape == (2, 3, 1)
++    assert torch.allclose(samples, torch.ones_like(samples))
++
++
++def test_sparc_defaults_keep_full_pit_and_final_test_but_shrink_epoch_validation():
++    exp = TimeDiffSPARCPITForecast()
++
++    assert exp.limit_train_batches == 100
++    assert exp.limit_pit_fit_batches == 100
++    assert exp.limit_val_batches == 20
++    assert exp.sparc_epochs == 5
++    assert exp.sparc_patience == 1
++    assert exp.sparc_min_delta == 0.0005
++    assert exp.pit_fit_num_samples == 100
++    assert exp.pit_sample_batch_size == 20
++    assert exp.val_num_samples == 20
++    assert exp.val_sample_batch_size == 20
++    assert exp.val_fixed_seed == 2026
++    assert exp.final_test_num_samples == 100
++
++
++def test_string_boolean_flags_are_normalized():
++    exp = TimeDiffSPARCPITForecast()
++    exp.rebuild_cache = "false"
++    exp.reuse_cache = "true"
++    exp.force_restart = "0"
++
++    exp._normalize_runtime_flags()
++
++    assert exp.rebuild_cache is False
++    assert exp.reuse_cache is True
++    assert exp.force_restart is False
++
++
++def test_sample_cache_reuses_timediff_prediction(tmp_path):
++    exp = TimeDiffSPARCPITForecast.__new__(TimeDiffSPARCPITForecast)
++    exp.device = "cpu"
++    exp.pred_len = 3
++    exp.sample_chunk_size = 2
++    exp.cache_timediff_predictions = True
++    exp.cache_sorted_samples = True
++    exp.cache_dtype = "float16"
++    exp._prediction_cache_root = tmp_path
++    exp._sample_calls = 0
++    exp._cache_metadata = lambda cache_key, num_samples: {"cache_key": cache_key, "num_samples": num_samples}
++    exp._dataset_label = lambda: "ECL"
++
++    class Dataset:
++        num_features = 1
++
++    exp.dataset = Dataset()
++
++    def fake_uncached(batch_x, batch_y, batch_x_mark, batch_y_mark, num_samples, sample_batch_size=None):
++        exp._sample_calls += 1
++        return torch.full((batch_x.shape[0], num_samples, exp.pred_len, 1), float(exp._sample_calls))
++
++    exp._sample_timediff_uncached = fake_uncached
++    batch_x = torch.zeros(2, 5, 1)
++    batch_y = torch.zeros(2, 3, 1)
++    batch_mark = torch.zeros(2, 3, 1)
++
++    first = exp._sample_timediff_cached(
++        "val_step1_base", batch_x, batch_y, batch_mark, batch_mark, num_samples=4, sample_batch_size=2
++    )
++    second = exp._sample_timediff_cached(
++        "val_step1_base", batch_x, batch_y, batch_mark, batch_mark, num_samples=4, sample_batch_size=2
++    )
++
++    assert exp._sample_calls == 1
++    assert first.dtype == torch.float32
++    assert torch.allclose(first, second)
++
++
++def test_train_cache_prefix_is_stable_across_sparc_epochs():
++    exp = TimeDiffSPARCPITForecast.__new__(TimeDiffSPARCPITForecast)
++
++    assert exp._stable_cache_prefix("train", 7) == "train_step7"
++    assert "epoch" not in exp._stable_cache_prefix("train", 7)
++
++
++def test_seeded_augment_context_is_stable_for_same_cache_key():
++    exp = TimeDiffSPARCPITForecast.__new__(TimeDiffSPARCPITForecast)
++    exp.jitter_std = 0.1
++    exp.scaling_std = 0.1
++    exp.time_mask_ratio = 0.1
++    exp.val_fixed_seed = 2026
++
++    batch_x = torch.ones(2, 8, 1)
++
++    first = exp._seeded_augment_context(batch_x, "train_step1")
++    second = exp._seeded_augment_context(batch_x, "train_step1")
++
++    assert torch.allclose(first, second)
++
++
++def test_resume_checkpoint_uses_completed_epoch_plus_one(tmp_path):
++    exp = TimeDiffSPARCPITForecast()
++    exp.dataset_type = "Electricity"
++    exp.pred_len = 3
++    exp.resume = "auto"
++    exp.resume_from = str(tmp_path / "last.pt")
++    exp.force_restart = False
++    exp.sparc_hidden_dim = 4
++    exp.sparc_calibrator = torch.nn.Linear(1, 1)
++
++    class Dataset:
++        num_features = 1
++
++    exp.dataset = Dataset()
++    optimizer = torch.optim.Adam(exp.sparc_calibrator.parameters(), lr=0.01)
++    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _epoch: 1.0)
++    torch.save(
++        {
++            "epoch": 1,
++            "model": exp.sparc_calibrator.state_dict(),
++            "optimizer": optimizer.state_dict(),
++            "scheduler": scheduler.state_dict(),
++            "best_val_loss": 0.5,
++            "bad_epochs": 1,
++            "compat_signature": exp._compat_signature(),
++        },
++        exp.resume_from,
++    )
++
++    state = exp._load_resume_checkpoint(optimizer, scheduler)
++
++    assert state["epoch"] == 1
++    assert state["bad_epochs"] == 1

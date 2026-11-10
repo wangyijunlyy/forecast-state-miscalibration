@@ -1,0 +1,65 @@
+# lightning==2.3.0.dev0
+seed_everything: 1
+early_stopping:
+  enabled: true
+  monitor: val_CRPS
+  patience: 5
+  min_delta: 0.0
+  mode: min
+trainer:
+  accelerator: gpu
+  devices: 1
+  strategy: auto
+  max_epochs: 50
+  use_distributed_sampler: false
+  limit_train_batches: 100
+  log_every_n_steps: 1
+  default_root_dir: ./results
+  accumulate_grad_batches: 4
+model:
+  forecaster:
+    class_path: probts.model.forecaster.prob_forecaster.DACUForecaster
+    init_args:
+      backbone_class_path: probts.model.forecaster.prob_forecaster.TimeGrad
+      adapter_mode: sample
+      likelihood: laplace
+      uncertainty_weight: 0.005
+      consistency_weight: 0.02
+      use_reliability_gate: false
+      consistency_samples: 8
+      forecast_mode: rescale
+      calibration_strength: 0.2
+      jitter_std: 0.01
+      scaling_std: 0.05
+      time_mask_ratio: 0.05
+      channel_mask_ratio: 0.05
+      freq_dropout_ratio: 0.0
+      backbone_init_args:
+        loss_type: l2
+        diff_steps: 100
+        beta_end: 0.1
+        beta_schedule: linear
+        conditional_length: 200
+        enc_hidden_size: 128
+        enc_num_layers: 3
+        enc_dropout: 0.1
+        use_lags: true
+        use_feat_idx_emb: true
+        use_time_feat: true
+        feat_idx_emb_dim: 1
+        use_scaling: true
+  num_samples: 100
+  learning_rate: 0.001
+  quantiles_num: 20
+data:
+  data_manager:
+    class_path: probts.data.data_manager.DataManager
+    init_args:
+      dataset: etth1
+      split_val: true
+      scaler: identity
+      context_length: 96
+      prediction_length: 96
+  batch_size: 16
+  test_batch_size: 16
+  num_workers: 8

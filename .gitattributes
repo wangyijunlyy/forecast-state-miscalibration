@@ -1,0 +1,3 @@
+* text=auto eol=lf
+native_payload/** -text
+upstream_source_reconstruction/*.patch -text

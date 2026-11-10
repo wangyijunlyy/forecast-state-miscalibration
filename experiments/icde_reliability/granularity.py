@@ -11,11 +11,11 @@ def method_name(b, g, budget):
     return f'b{b}_h{g}_n{budget}'
 
 
-def fit_partition(rows, targets, horizon, horizon_length, bins, horizon_bins):
+def fit_partition(rows, targets, horizon, horizon_length, bins, horizon_bins, source_filter=True):
     mean, raw, scale = summaries(rows)
     if bins < 1 or horizon_bins < 1 or horizon_bins > horizon_length:
         raise ValueError('Invalid partition resolution')
-    valid = raw > 1.01e-6
+    valid = raw > 1.01e-6 if source_filter else np.ones(len(raw), dtype=bool)
     if not valid.any():
         raise ValueError('No valid residual sources')
     residual = (np.asarray(targets)-mean)/scale

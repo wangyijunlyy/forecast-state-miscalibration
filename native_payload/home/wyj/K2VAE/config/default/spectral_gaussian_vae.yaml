@@ -1,0 +1,19 @@
+model:
+  forecaster:
+    class_path: probts.model.forecaster.prob_forecaster.spectral_gaussian_vae.SpectralGaussianVAEModel
+    init_args:
+      d_model: 128
+      d_ff: 256
+      e_layers: 1
+      dropout: 0.1
+      activation: relu
+      n_heads: 4
+      factor: 3
+      patch_len: 24
+      multistep: true
+      dynamic_dim: 128
+      hidden_layers: 3
+      hidden_dim: 256
+      weight_beta: 0.01
+      spectral_cond_dim: 64
+      sample_schedule: 20

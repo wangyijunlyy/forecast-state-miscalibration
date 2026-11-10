@@ -1,0 +1,39 @@
+# lightning==2.3.0.dev0
+seed_everything: 1
+trainer:
+  accelerator: gpu
+  devices: 1
+  strategy: auto
+  max_epochs: 50
+  use_distributed_sampler: false
+  limit_train_batches: 100
+  log_every_n_steps: 1
+  check_val_every_n_epoch: 1
+  default_root_dir: ./results
+  accumulate_grad_batches: 1
+  gradient_clip_val: 0.5
+model:
+  forecaster:
+    class_path: probts.model.forecaster.prob_forecaster.deepar.DeepARModel
+    init_args:
+      hidden_size: 128
+      num_layers: 2
+      dropout: 0.1
+      min_scale: 0.0001
+      use_lags: false
+      use_feat_idx_emb: true
+      use_time_feat: true
+      feat_idx_emb_dim: 1
+      use_scaling: false
+  num_samples: 100
+  learning_rate: 0.001
+  quantiles_num: 20
+data:
+  data_manager:
+    class_path: probts.data.data_manager.DataManager
+    init_args:
+      split_val: true
+      scaler: standard # identity, standard, temporal
+  batch_size: 64
+  test_batch_size: 32
+  num_workers: 8

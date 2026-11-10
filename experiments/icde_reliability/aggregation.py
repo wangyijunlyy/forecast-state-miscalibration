@@ -90,7 +90,7 @@ def audit_metric(metric):
     state = metric['state_coverage']
     counts = np.asarray(state['counts']); hits = np.asarray(state['covered'])
     levels = np.asarray(state['levels']); eligible = counts >= 128
-    if counts.shape != (16,) or hits.shape != (16, 3) or counts.sum() != n:
+    if counts.ndim != 1 or len(counts) not in (16, 36) or hits.shape != (len(counts), 3) or counts.sum() != n:
         raise ValueError('State population mismatch')
     if np.any(counts < 0) or np.any(hits < 0) or np.any(hits > counts[:, None]):
         raise ValueError('Invalid state coverage counts')

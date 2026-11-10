@@ -16,9 +16,12 @@ def evaluate(history, states, batches):
     edges = []
     for key in ('mean_cuts', 'log_scale_cuts'):
         a = np.asarray(cuts[key], dtype=np.float64)
-        if a.shape != (3,) or not np.isfinite(a).all() or np.any(np.diff(a) < 0):
-            raise ValueError(f'Expected three finite ordered boundaries for {key}')
+        if a.ndim != 1 or len(a) not in (3,5) or not np.isfinite(a).all() or np.any(np.diff(a) < 0):
+            raise ValueError(f'Expected three or five finite ordered boundaries for {key}')
         edges.append(np.r_[-np.inf, a, np.inf])
+    if len(edges[0]) != len(edges[1]):
+        raise ValueError('Mean and scale partitions must use the same number of groups')
+    n_states = (len(edges[0])-1)*(len(edges[1])-1)
     target_pool = TargetReservoir(4096, seed=50001)
     with np.load(history, allow_pickle=False) as data:
         targets = data['targets']
@@ -33,7 +36,7 @@ def evaluate(history, states, batches):
             if 'Native' not in names:
                 raise ValueError('Every batch must include Native forecasts')
             if accumulators is None:
-                accumulators = {name: ReliabilityMetrics(thresholds) for name in sorted(names)}
+                accumulators = {name: ReliabilityMetrics(thresholds,n_states=n_states) for name in sorted(names)}
             elif names != set(accumulators):
                 raise ValueError('Paired method set differs between batches')
             x = data['Native']; y = data['targets']

@@ -14,8 +14,18 @@ parser=argparse.ArgumentParser();parser.add_argument('--workspace',type=Path,def
 parser.add_argument('--records',type=Path);parser.add_argument('--manifest',type=Path)
 parser.add_argument('--training-runs',type=Path,help='Complete training-fitted DC16/DC64 records for configuration-win counts')
 parser.add_argument('--primary-only',action='store_true',help='Skip the original native traffic-training audit')
+parser.add_argument('--fsdc36-records',type=Path,help='Canonical complete 36-state campaign records')
 args=parser.parse_args();workspace=args.workspace.resolve();local=workspace/'experiments/icde_reliability/results'
 records=args.records.resolve() if args.records else (workspace/'reference_records' if (workspace/'reference_records').exists() else local)
+fsdc36=args.fsdc36_records or local/'fsdc36'
+if (fsdc36/'manifest.json').exists() and (fsdc36/'runs').exists():
+    destination=fsdc36/'analysis'
+    subprocess.run([sys.executable,str(CODE/'aggregate_fsdc36.py'),'--root',str(fsdc36),
+                    '--output',str(destination)],check=True)
+    subprocess.run([sys.executable,str(CODE/'render_fsdc36.py'),'--results',str(destination),
+                    '--paper',str(workspace/'ICDE')],check=True)
+    print('Rebuilt canonical 36-state numerical evidence. Use the plotting workflow for all refreshed figure sources.')
+    raise SystemExit(0)
 current_manifest=workspace/'experiments/icde_reliability/current_manifest.json'
 manifest=args.manifest or (current_manifest if current_manifest.exists() else workspace/'experiments/source_filtered_reproduction/results/manifest.json')
 training=args.training_runs or (workspace/'payload/home/wyj/source_filtered_reproduction/runs' if (workspace/'payload').exists() else workspace/'experiments/source_filtered_reproduction/results/runs')
@@ -69,7 +79,6 @@ def configuration_wins():
         row[1]+=values['DC16','CRPS']<values['Native','CRPS']
         row[2]+=values['DC16','QICE_percent']<values['Native','QICE_percent']
         row[3]+=values['DC16','CRPS']<values['DC64','CRPS']
-    (paper/'tables/configuration_wins.tex').write_text('\n'.join(' & '.join([LABELS[b],*map(str,counts[b])])+r' \\' for b in BACKBONES)+'\n')
     (summary/'configuration_wins.json').write_text(json.dumps(dict(tasks=len(tasks),configurations=len(groups),counts=counts),indent=2)+'\n')
 
 
@@ -86,6 +95,8 @@ else:
     execute('aggregate_deepstuq.py',['--runs',traffic,'--output',summary/'deepstuq/summary'])
     require(summary/'deepstuq/summary',12);arguments+=['--deepstuq',summary/'deepstuq/summary']
 execute('render_tables.py',arguments)
+execute('render_supplement.py',['--results',summary,'--paper',paper])
+execute('audit_supplement.py',['--results',summary,'--paper',paper])
 configuration_wins()
 execute('render_eab_controls.py',['--results',summary,'--output',paper/'tables'])
 if (records/'granularity/manifest.json').exists():

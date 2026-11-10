@@ -1,6 +1,6 @@
 """NumPy deployment of the actual source-filtered empirical calibration.
 
-This module contains the complete DC16/DC64 fitting and reconstruction rule.
+This module contains the complete empirical fitting and reconstruction rule.
 It needs neither a model repository nor a pickle import path. Callers supply
 the retained historical fitting rows and preserve their real horizon IDs.
 """
@@ -15,8 +15,8 @@ def bounded(values):
     return a if len(a) <= 20000 else a[np.linspace(0, len(a)-1, 20000).astype(int)]
 
 
-def edges(values):
-    a = np.quantile(values, np.linspace(0., 1., 5))
+def edges(values, bins=4):
+    a = np.quantile(values, np.linspace(0., 1., bins+1))
     a[0] = -np.inf; a[-1] = np.inf
     return a
 
@@ -49,18 +49,18 @@ class EmpiricalCalibrator:
             np.searchsorted(self.scale_edges[1:-1], np.log(scale), side='right')], axis=1).astype(int)
 
     @classmethod
-    def fit_rows(cls, rows, targets, horizon, horizon_length, n_horizon_bins=1, source_filter=True):
+    def fit_rows(cls, rows, targets, horizon, horizon_length, n_horizon_bins=1, source_filter=True, summary_bins=4):
         mean, raw, scale = summaries(rows)
         targets = np.asarray(targets, dtype=np.float64)
         if targets.shape != mean.shape or not np.isfinite(targets).all():
             raise ValueError('Expected one finite target per fitting coordinate')
-        if horizon_length <= 0 or n_horizon_bins not in (1, 4):
-            raise ValueError('Expected a positive horizon and the DC16 or DC64 partition')
+        if horizon_length <= 0 or n_horizon_bins not in (1,2,4,8) or summary_bins not in (4,6):
+            raise ValueError('Expected a positive horizon, four or six summary groups, and 1/2/4/8 horizon groups')
         valid = raw > 1.01e-6 if source_filter else np.ones(len(mean), dtype=bool)
         if not valid.any():
             raise ValueError('No fitting residual has a noncollapsed source scale')
         residual = (targets-mean)/scale
-        cal = cls(edges(mean), edges(np.log(scale)), bounded(residual[valid]), {},
+        cal = cls(edges(mean,summary_bins), edges(np.log(scale),summary_bins), bounded(residual[valid]), {},
                   int(horizon_length), int(n_horizon_bins), int(valid.sum()), int((~valid).sum()))
         keys = cal.keys(mean, scale, horizon)
         unique, inverse = np.unique(keys, axis=0, return_inverse=True)
@@ -133,8 +133,8 @@ class CompiledCalibrator:
         templates = []; mapping = []; used = {}
         grid = (np.arange(100)+.5)/100
         for h in range(cal.n_horizon_bins):
-            for m in range(4):
-                for s in range(4):
+            for m in range(len(cal.mean_edges)-1):
+                for s in range(len(cal.scale_edges)-1):
                     key = (h, m, s); identity = key if key in cal.local_pools else 'global'
                     if identity not in used:
                         used[identity] = len(templates)
@@ -145,7 +145,7 @@ class CompiledCalibrator:
 
     def template_ids(self, mean, scale, horizon):
         keys = EmpiricalCalibrator.keys(self, mean, scale, horizon)
-        return self.state_to_template[(keys[:, 0]*4+keys[:, 1])*4+keys[:, 2]]
+        return self.state_to_template[(keys[:, 0]*(len(self.mean_edges)-1)+keys[:, 1])*(len(self.scale_edges)-1)+keys[:, 2]]
 
     def transform_rows(self, rows, horizon):
         mean, _, scale = summaries(rows)
@@ -198,7 +198,9 @@ if __name__ == '__main__':
     commands = parser.add_subparsers(dest='command', required=True)
     fit = commands.add_parser('fit'); fit.add_argument('--coordinates', type=Path, required=True)
     fit.add_argument('--horizon-length', type=int, required=True)
-    fit.add_argument('--horizon-bins', type=int, choices=[1, 4], default=1)
+    fit.add_argument('--horizon-bins', type=int, choices=[1,2,4,8], default=1)
+    fit.add_argument('--summary-bins',type=int,choices=[4,6],default=6,
+                     help='Groups per summary; default 6 gives the manuscript 36-state partition')
     fit.add_argument('--output', type=Path, required=True)
     apply = commands.add_parser('apply'); apply.add_argument('--calibrator', type=Path, required=True)
     apply.add_argument('--samples', type=Path, required=True); apply.add_argument('--output', type=Path, required=True)
@@ -206,7 +208,7 @@ if __name__ == '__main__':
     if args.command == 'fit':
         with np.load(args.coordinates, allow_pickle=False) as data:
             cal = EmpiricalCalibrator.fit_rows(data['rows'], data['targets'], data['horizon'],
-                args.horizon_length, args.horizon_bins)
+                args.horizon_length, args.horizon_bins,summary_bins=args.summary_bins)
         cal.save(args.output)
     else:
         cal = EmpiricalCalibrator.load(args.calibrator)

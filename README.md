@@ -1,65 +1,82 @@
 # Forecast-State Miscalibration
 
-Code, data, configurations and experiment records for **Forecast-State Miscalibration in Probabilistic Time-Series Analytics**. Neural model weights are not distributed; the native training code creates checkpoints locally.
+Experiment code for **Forecast-State Miscalibration in Probabilistic Time-Series Analytics**. The current method is forecast-state probability calibration (**FSPC**): source-filtered residual templates in 6 × 6 forecast-mean/log-scale states, centered reconstruction, and a validation-selected affine-plus-state mean blended with a training-bias reference.
 
-## Experiments
+This branch contains code, task configurations, dependency specifications and reproduction instructions. Datasets, trained weights, cached predictions, fitted calibrators, experiment results and manuscript outputs are generated or downloaded locally; they are not checked in.
 
-- Seven backbones,83 dataset–horizon configurations,and three training seeds:249 training runs.
-- NsDiff ETTm1,ETTm2 and ExchangeRate use192 forecast steps,with nine freshly trained tasks replacing the historical24-step records.
-- Empirical residual calibration,global/conditional PIT,and two-/four-parameter Gaussian corrections on paired complete native validation/test forecasts.
-- Source-validity,budget,state-assignment,and exact template-compilation controls.
-- DeepSTUQ (**ICDE2023**) is the seventh backbone on PEMS03/04/07/08. Its twelve native training replications receive the same primary corrections,Gaussian controls,training DC16/DC64 comparison,budget and source-validity ablations,state-assignment controls,and compilation benchmarks as the other six backbones.
+## Quick check without a GPU
 
-Backbone summaries first average configurations within each seed,then compute sample SD across three training seeds. Manuscript values use three decimal places;raw records retain full precision.
-
-## Download
-
-Download the code and records from [v1.2.0](https://github.com/wangyijunlyy/forecast-state-miscalibration/releases/tag/v1.2.0). The unchanged dataset parts are available in [v1.0.0](https://github.com/wangyijunlyy/forecast-state-miscalibration/releases/tag/v1.0.0):
-
-| Files | Contents |
-|---|---|
-| `code-and-records.tar.gz` | Code,configurations,reference records,source-restoration patches,dependency locks,analysis scripts,and measured figure data |
-| `data-only.tar.gz.part-000` through `part-009` | Original dataset files in the native loader layouts;no model checkpoints |
-| JSON manifests | File names,byte sizes and transfer-integrity records |
-
-The dataset archive is approximately639MB compressed. Model checkpoint files (`.pt`, `.pth`, `.ckpt`, `.safetensors`) are excluded from both archives.
-
-## Rebuild tables and figures
-
-With Python3.10–3.12,download the code archive and run:
+Use Python 3.10 (the native experiments used 3.10.19):
 
 ```sh
-mkdir artifact
-tar -xzf code-and-records.tar.gz -C artifact
-python -m pip install numpy==1.26.4 scipy==1.15.3 matplotlib==3.10.3
-cd artifact
-python experiments/icde_reliability/rebuild_analysis.py --workspace "$PWD"
-python experiments/icde_reliability/audit_table_sd.py --results analysis_summaries --paper ICDE
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements-analysis.txt
+python -m unittest discover -s tests -v
+python -m unittest discover -s experiments/icde_reliability -p 'test_final_fspc.py' -v
+python -m unittest discover -s experiments/icde_reliability -p 'test_fspc_unified.py' -v
+python scripts/reproduce.py list
 ```
 
-These commands audit the recorded suites and regenerate the shared seven-backbone result tables and two quantitative figures. The SD auditor independently verifies all525 mean/SD cells against raw three-seed scores. No GPU,dataset download or neural model weights are needed for this analysis.
+The tests use generated arrays to check isolation of the mean/shape arms, complete FSPC fitting, strict event-threshold ties, bitwise compiled/reference equality and saved-state reloads. Generated arrays are numerical tests, not benchmark results.
 
-## Train and evaluate native models
+## Reproduce a native-model experiment
 
-Download all ten data parts,concatenate in their three-digit suffix order,and extract into the same artifact directory:
+Native training/inference requires Linux, an NVIDIA GPU, and the measured PyTorch 2.4.1 + CUDA 12.1 environment. RTX 4090 GPUs were used for the original experiments. Complete FSPC CPU timings used Intel Xeon Gold 6426Y processors, two CPU threads per worker, and four workers.
 
 ```sh
-cat data-only.tar.gz.part-[0-9][0-9][0-9] > data-only.tar.gz
-tar -xzf data-only.tar.gz -C artifact
+python scripts/setup_environment.py --requirements requirements-native-lock.txt
+python -m pip install -r requirements-external.txt
+
+# Restore pinned public sources and apply the experiment's source patches.
+python scripts/reproduce.py prepare --workspace "$PWD/work"
+# Download only the dataset archive, in the layouts expected by native loaders.
+python scripts/reproduce.py fetch-data --workspace "$PWD/work"
+
+# A single configuration; train once, reuse its checkpoint for every correction.
+python scripts/reproduce.py train --workspace "$PWD/work" \
+  --task K2VAE_ettm1_h192_seed1 --gpu 0
+python scripts/reproduce.py evaluate --workspace "$PWD/work" \
+  --task K2VAE_ettm1_h192_seed1 --gpu 0 --controls --external
 ```
 
-Follow [the training/replay instructions](docs/ARTIFACT_REPLAY.md) to restore505 upstream source files,install the measured environment,relocate paths,and invoke `from_scratch_eab.py`. Native training uses Linux,Python3.10,PyTorch2.4.1+cu121,and a compatible NVIDIA GPU. The entry point uses the recorded native training settings,refits the calibration states locally,and performs complete native validation/test evaluation.
+`configs/tasks.json` fixes all **249 runs / 83 configurations / seven backbones**: K²VAE, PPM, TMDM, Diffusion-TS, TimeDiff, NsDiff and DeepSTUQ. `list` prints exact task identities. Repeat `train` and `evaluate` for the required identities; run all three configured training runs for each configuration before summarizing:
 
-NsDiff on ETTh1 requires shared F/G initializers. The helper trains those locally from their actual saved configurations;no downloaded pretrained F/G parameters are required. DeepSTUQ's from-scratch route retains its full architecture,pretraining,all twenty AWA epochs,ten averaged snapshots,ten dropout passes,and temperature calibration.
+```sh
+python scripts/reproduce.py summarize --workspace "$PWD/work"
+```
 
-## Evidence and interpretation
+After installing the external dependencies, algorithm-level baseline checks can be run with `python -m pip install -r requirements-test.txt` and `python -m pytest experiments/icde_reliability/test_external_baselines.py -q`.
 
-All249 primary,Gaussian,state-assignment and compiled-deployment task records are included. The twelve original DeepSTUQ training records also preserve the complete native method and provide a native-output parity reference. Fresh extraction of the code archive regenerates the shared result tables and both figures. The original private-checkpoint replay in a clean dependency environment reproduced321 native metric comparisons exactly. The public release distributes the recorded evidence and from-scratch training route;it does not distribute those checkpoints.
+Native scores and all corrections share the complete native test iterator. Evaluation refits every calibration method from locally generated historical forecasts. `--external` adds EMOS, learned PIT (Qian et al., Technometrics 2025) and the 1000-tree ensemble-postprocessing QRF. Global DC, global PIT and conditional PIT are always included. Diffusion-TS uses the same unclipped sampler for Native and all corrections under standard-score normalization.
 
-Traffic scores retain native flow units;the other six backbones use model-normalized units. Each correction is compared within the backbone's matched task set,and the shared tables do not pool these scales into an absolute ranking.
+`--controls` adds partition resolution, fitting budget, temporal template fitting, source filtering and five shuffled state-assignment controls. Four mean/shape arms and final-FSPC fitting/deployment benchmarks are always evaluated. Retained-cohort ablations and cost/parity checks are stored separately from complete-test scores. See [the reproduction guide](docs/REPRODUCIBILITY.md) for outputs, seeds, datasets and experiment mapping.
 
-## Attribution
+## Apply FSPC to existing ensemble forecasts
 
-Public upstream bases plus measured patches reconstruct the native model sources. Source identities,available licenses,and modifications are preserved in package provenance. Upstream repositories and datasets retain their original terms;this repository does not relicense them. The manuscript PDF and author metadata are separate from this artifact release.
+If forecasts are already available, no backbone training is needed. Prepare three NPZ coordinate files as specified in [the array interface](docs/ARRAY_INTERFACE.md), then run:
 
-The current granularity study contains8217 partition/budget fits on the corrected249 tasks. The nine numeric tables include the separate temporal-fitting comparison; sample SD appears as a right subscript with three decimals. The finite-validation and equivalent attention precision policies are documented in [the NsDiff protocol](docs/NSDIFF_H192_PROTOCOL.md).
+```sh
+python scripts/fspc_arrays.py \
+  --train training.npz --validation validation.npz --test test.npz \
+  --horizon 192 --seed 1 --output outputs/my_run --controls
+```
+
+This CPU-capable entry point calls the same `fit_unified`, four-arm reconstruction and `CompiledFSPC` implementations as the native route. Add `--external` after installing PyTorch and `requirements-external.txt` to compare EMOS, learned PIT and QRF.
+
+## Code map
+
+| Component | Source |
+| --- | --- |
+| Final FSPC fit, purged selection and refit | `experiments/icde_reliability/fspc_unified.py` |
+| Affine/state mean and selection objective | `location_scale.py`, `mean_improved_all.py`, `mean_anchor.py` in the same directory |
+| Residual pools, source filtering and fallback | `portable_dc.py`, `granularity.py` |
+| Full compiled FSPC and strict event queries | `final_fspc.py` |
+| Native-data reviewer adapter | `reviewer_native.py`, `reviewer_pipeline.py` |
+| EMOS / learned PIT / QRF | `external_baselines.py`, `qian_pit.py`, `ragged_qrf.py` |
+| Common metrics and three-run aggregation | `reliability_metrics.py`, `aggregation.py` |
+| Original measured campaign runners | `run_*.py`, `aggregate_*.py`, and protocol documents |
+
+The reviewer adapters remove dependencies on previously completed result directories; they do not replace the underlying model, FSPC or metric implementations. Original campaign runners remain available for inspecting their historical orchestration and parity checks. Their recorded-result replay modes require locally generated campaigns and are not the quick-start entry point.
+
+Fresh training can vary across hardware and numerical libraries. Published metric summaries are not injected into computed outputs. This code-only branch does not distribute the historical prediction arrays or author-supplied aggregate corrections needed to reconstruct every paper cell exactly. See [third-party attribution](NOTICE.md) for source revisions and licenses.

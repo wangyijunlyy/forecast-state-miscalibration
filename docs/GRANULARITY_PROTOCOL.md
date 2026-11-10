@@ -84,3 +84,14 @@ nine. Equal-count 8x8x1 beats 4x4x4 on seven backbone means and 52 configuration
 means. Every 256-state fit at the 2k cap uses global fallback for every test
 coordinate. These findings replace the earlier binary-choice argument
 without retuning the fixed primary benchmark.
+
+## Native-normalized average ratios
+
+The manuscript adds an Avg. ratio row to both panels. For each training run,
+first equally average configuration CRPS within each backbone, divide by the
+corresponding Native CRPS on the same retained test cohort, then equally average
+the seven backbone ratios. Report the mean and sample SD across the three runs.
+Native scores come from the audited state-control retained-cohort records,
+including the corrected NsDiff horizon-192 tasks. Complete-test Native scores
+are not substituted. Full-precision values and per-run averages are retained in
+`results/granularity/summary/average_ratio_statistics.csv`.

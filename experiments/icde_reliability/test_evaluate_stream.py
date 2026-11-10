@@ -9,13 +9,14 @@ import numpy as np
 
 
 class StreamInterfaceTests(unittest.TestCase):
-    def run_case(self, omit_method=False):
+    def run_case(self, omit_method=False, summary_bins=4):
         script = Path(__file__).with_name('evaluate_stream.py')
         self.assertTrue(script.exists(), 'Public forecast-batch evaluator is missing')
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); rng = np.random.default_rng(11)
             np.savez(root/'history.npz', targets=rng.normal(size=(100, 2)))
-            (root/'states.json').write_text(json.dumps(dict(mean_cuts=[-.1, 0, .1], log_scale_cuts=[-.1, 0, .1])))
+            cuts = np.linspace(-.2,.2,summary_bins-1).tolist()
+            (root/'states.json').write_text(json.dumps(dict(mean_cuts=cuts, log_scale_cuts=cuts)))
             for i, size in enumerate([3, 2]):
                 x = rng.normal(size=(size, 100, 4, 2)); y = rng.normal(size=(size, 4, 2))
                 arrays = dict(targets=y, Native=x)
@@ -42,6 +43,14 @@ class StreamInterfaceTests(unittest.TestCase):
         result, output = self.run_case(omit_method=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIsNone(output)
+
+    def test_36_state_boundaries_preserve_the_complete_paired_population(self):
+        result,output = self.run_case(summary_bins=6)
+        self.assertEqual(result.returncode,0,result.stderr)
+        counts = output['methods']['Native']['state_coverage']['counts']
+        self.assertEqual(len(counts),36)
+        self.assertEqual(sum(counts),40)
+        self.assertEqual(counts,output['methods']['DC16']['state_coverage']['counts'])
 
 
 if __name__ == '__main__':

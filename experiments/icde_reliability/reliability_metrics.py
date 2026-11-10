@@ -24,7 +24,7 @@ def state_ids(samples, mean_edges, scale_edges):
     x = np.asarray(samples, dtype=np.float64)
     mu = x.mean(1).reshape(-1)
     sigma = x.std(1, ddof=1).clip(1e-6).reshape(-1)
-    return (4*np.searchsorted(mean_edges[1:-1], mu, side='right')
+    return ((len(scale_edges)-1)*np.searchsorted(mean_edges[1:-1], mu, side='right')
             + np.searchsorted(scale_edges[1:-1], np.log(sigma), side='right'))
 
 
@@ -54,19 +54,19 @@ class TargetReservoir:
 
 
 class ReliabilityMetrics:
-    def __init__(self, thresholds, min_state_count=128):
+    def __init__(self, thresholds, min_state_count=128, n_states=16):
         self.thresholds = np.asarray(thresholds, dtype=np.float64)
         if self.thresholds.ndim != 2 or self.thresholds.shape[1] != 3:
             raise ValueError('Expected per-channel thresholds [C,3]')
-        self.min_state_count = min_state_count
+        self.min_state_count = min_state_count; self.n_states = n_states
         self.n = 0; self.crps = self.se = self.ae = self.medae = 0.
         self.qice_counts = np.zeros(10, dtype=np.int64)
-        self.state_counts = np.zeros(16, dtype=np.int64)
-        self.covered = np.zeros((16, 3), dtype=np.int64)
+        self.state_counts = np.zeros(n_states, dtype=np.int64)
+        self.covered = np.zeros((n_states, 3), dtype=np.int64)
         self.brier = np.zeros(3); self.event_count = np.zeros(3, dtype=np.int64)
         self.probability_bin_counts = np.zeros((3, 10), dtype=np.int64)
         self.probability_sums = np.zeros((3, 10)); self.observation_sums = np.zeros((3, 10))
-        self.state_brier_sums = np.zeros((16, 3))
+        self.state_brier_sums = np.zeros((n_states, 3))
 
     def update(self, samples, target, groups, ordered=False):
         x = np.asarray(samples, dtype=np.float64); y = np.asarray(target, dtype=np.float64)
@@ -77,7 +77,7 @@ class ReliabilityMetrics:
         rows = x.transpose(0, 2, 3, 1).reshape(-1, x.shape[1]); y = y.reshape(-1)
         groups = np.asarray(groups).reshape(-1)
         channels = np.arange(len(y)) % x.shape[-1]
-        if len(groups) != len(y) or np.any(groups < 0) or np.any(groups >= 16):
+        if len(groups) != len(y) or np.any(groups < 0) or np.any(groups >= self.n_states):
             raise ValueError('Invalid state assignments')
         for start in range(0, len(y), 8192):
             end = start+8192; a = rows[start:end]; b = y[start:end]; g = groups[start:end]
@@ -89,15 +89,15 @@ class ReliabilityMetrics:
             q = row_quantiles(z, np.arange(11)/10)
             membership = np.clip((b[:, None] > q).sum(1), 1, 10)-1
             self.qice_counts += np.bincount(membership, minlength=10)
-            self.state_counts += np.bincount(g, minlength=16)
+            self.state_counts += np.bincount(g, minlength=self.n_states)
             hits = b[:, None] <= row_quantiles(z, [.1, .5, .9])
             for j in range(3):
-                self.covered[:, j] += np.bincount(g, weights=hits[:, j], minlength=16).astype(np.int64)
+                self.covered[:, j] += np.bincount(g, weights=hits[:, j], minlength=self.n_states).astype(np.int64)
                 threshold = self.thresholds[channels[start:end], j]
                 p = (a > threshold[:, None]).mean(1); event = b > threshold
                 errors = (p-event)**2
                 self.brier[j] += errors.sum(); self.event_count[j] += event.sum()
-                self.state_brier_sums[:, j] += np.bincount(g, weights=errors, minlength=16)
+                self.state_brier_sums[:, j] += np.bincount(g, weights=errors, minlength=self.n_states)
                 bins = np.minimum((p*10).astype(int), 9)
                 self.probability_bin_counts[j] += np.bincount(bins, minlength=10)
                 self.probability_sums[j] += np.bincount(bins, weights=p, minlength=10)

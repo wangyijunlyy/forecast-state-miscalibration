@@ -1,0 +1,36 @@
+# lightning==2.3.0.dev0
+seed_everything: 1
+trainer:
+  accelerator: gpu
+  devices: 1
+  strategy: auto
+  max_epochs: 20
+  use_distributed_sampler: false
+  limit_train_batches: 100
+  log_every_n_steps: 1
+  check_val_every_n_epoch: 1
+  default_root_dir: ./results
+  accumulate_grad_batches: 1
+  gradient_clip_val: 0.5
+model:
+  forecaster:
+    class_path: probts.model.forecaster.prob_forecaster.QVAE_probf.QVAE_Probf_Forecaster
+    init_args:
+      n_qbits: 9
+      n_blocks: 2
+      bottleneck_qbits: 1
+      kl_weight: 0.01
+      learning_rate: 0.01
+  num_samples: 100
+  learning_rate: 0.01
+  quantiles_num: 20
+data:
+  data_manager:
+    class_path: probts.data.data_manager.DataManager
+    init_args:
+      split_val: true
+      scaler: standard
+      dataset: etth1
+  batch_size: 64
+  test_batch_size: 32
+  num_workers: 8

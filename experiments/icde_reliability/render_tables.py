@@ -3,6 +3,8 @@ import argparse
 import csv
 import json
 import math
+from collections import defaultdict
+from statistics import mean, stdev
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
@@ -12,7 +14,7 @@ LABELS = {'K2VAE': r'$K^2$VAE', 'PPM':'PPM', 'TMDM':'TMDM', 'DiffusionTS':'Diffu
 VENUES = {'K2VAE':"ICML '25", 'PPM':"ICML '26", 'TMDM':"ICLR '24", 'DiffusionTS':"ICLR '24",
           'TimeDiff':"ICML '23", 'NsDiff':"ICML '25", 'DeepSTUQ':"ICDE '23"}
 METHODS = ['Native', 'TrainDC16', 'DC16', 'GlobalDC', 'GlobalPIT', 'ConditionalPIT']
-HEADINGS = ['Native', 'Train DC16', 'Val DC16', 'Global DC', 'Global PIT', 'Cond. PIT']
+HEADINGS = ['Native', 'Train w/o Mean', 'w/o Mean Control', 'Global DC', 'Global PIT', 'Cond. PIT']
 
 
 def read(path):
@@ -49,6 +51,27 @@ def comparison_cells(records, metric):
     return [cell(r[metric+'_mean'], r[metric+'_std'],
                  math.isclose(float(r[metric+'_mean']), optimum, rel_tol=0, abs_tol=1e-12))
             for r in records]
+
+
+def relative_backbone_averages(primary_directory, gaussian_directory, methods, metric):
+    rows = read(primary_directory/'raw_task_metrics.csv')
+    scores = defaultdict(list)
+    for r in rows:
+        if r['method'] in methods:
+            scores[r['backbone'],r['method'],int(r['seed'])].append(float(r[metric]))
+    result = {}
+    for method in methods:
+        seed_values = []
+        for seed in (1,2,3):
+            ratios = []
+            for backbone in BACKBONES:
+                native = mean(scores[backbone,'Native',seed])
+                if native <= 0:
+                    raise ValueError('A Native-normalized average requires a positive reference score')
+                ratios.append(mean(scores[backbone,method,seed])/native)
+            seed_values.append(mean(ratios))
+        result[method] = (mean(seed_values),stdev(seed_values))
+    return result
 
 
 def table(caption, label, header, rows, wide=True, numeric_from=2):
@@ -92,64 +115,67 @@ def primary(directory):
         factors = [1, 1/1024, 1, 1, 100]
         costs.append(' & '.join([LABELS[b]]+[cell(float(resource[k+'_mean'])*f,
             float(resource[k+'_std'])*f) for k,f in zip(keys,factors)])+r' \\')
-    common = 'Subscripts give sample SD across three seed averages of configurations. DeepSTUQ retains traffic-flow units; other backbones use model-normalized units.'
+    common = 'Subscripts give sample SD across three run averages of configurations. DeepSTUQ retains original traffic-flow units; other backbones use model-normalized units.'
     return {
-        'full_distribution.tex':table('Complete-test distribution scores. Validation-fitted methods share fitting coordinates and native test forecasts; Train DC16 uses the earlier training segment. '+common,
+        'full_distribution.tex':table('Complete-test distribution scores. Validation-fitted methods share fitting coordinates and native test forecasts; Train w/o Mean uses the earlier training segment. '+common,
             'tab:full-distribution', ['Backbone','Metric']+HEADINGS, distribution[:-1]),
-        'full_reliability.tex':table('Complete-test state and event reliability. Parentheses give configurations with eligible states in all three seeds over all configurations. State errors use that common subset; Brier scores retain all tasks and equally average threshold levels 0.8,0.9,0.95. '+common,
+        'full_reliability.tex':table('Complete-test state and event reliability. Parentheses give configurations with eligible states in all three runs over all configurations. State errors use that common subset; Brier scores retain all tasks and equally average threshold levels 0.8,0.9,0.95. '+common,
             'tab:full-reliability', ['Backbone (n)','Metric']+HEADINGS, reliability[:-1]),
-        'reservoir_controls.tex':table('Calibration-budget and mechanism controls on shared uniformly retained test coordinates. Budgets are coordinate caps; DC64 and unfiltered DC16 use the full available validation reservoir. These scores are separate from complete-test scores. '+common,
-            'tab:reservoir-controls', ['Backbone','Metric','DC16: 2k','DC16: 10k','DC16: 50k','DC64','Unfiltered DC16'], budgets[:-1]),
-        'execution_cost.tex':table('Validation-fitted DC16 execution cost. Transform and generation are microseconds per coordinate; the ratio is CPU transform time divided by synchronized native GPU generation time. State size is KiB. Subscripts give sample SD over three seed averages of configurations.',
+        'reservoir_controls.tex':table('Calibration-budget and mechanism controls on shared uniformly retained test coordinates. Budgets are coordinate caps; w/o Mean Control-64 and the ablation without mean control or source filtering use the full available validation reservoir. These scores are separate from complete-test scores. '+common,
+            'tab:reservoir-controls', ['Backbone','Metric','w/o Mean Control: 2k','w/o Mean Control: 10k','w/o Mean Control: 50k','DC64','w/o Mean/Filter'], budgets[:-1]),
+        'execution_cost.tex':table('Validation-fitted w/o Mean Control execution cost. Fit measures estimation from generated ensembles. Transform and generation are microseconds per coordinate; the ratio is CPU transform time divided by synchronized native GPU generation time. State size is KiB. Subscripts give sample SD over three run averages of configurations.',
             'tab:execution-cost', ['Backbone',r'Fit (s) $\downarrow$',r'State (KiB) $\downarrow$',r'Transform ($\mu$s) $\downarrow$',r'Native ($\mu$s) $\downarrow$',r'Ratio (\%) $\downarrow$'], costs, numeric_from=1),
-        'point_mse.tex':table('DC16 mean-forecast MSE ($\\downarrow$) across fitting segments. Subscripts give sample SD over three seed averages. DeepSTUQ uses flow units; others use model-normalized units.',
-            'tab:point', ['Backbone','Native','Train DC16','Val DC16'], points, wide=False, numeric_from=1).replace(r'\tabcolsep}{4pt}',r'\tabcolsep}{2pt}'),
+        'point_mse.tex':table('w/o Mean Control mean-forecast MSE ($\\downarrow$) across fitting segments. Subscripts give sample SD over three run averages. DeepSTUQ MSE uses squared original traffic-flow units; others use squared model-normalized units.',
+            'tab:point', ['Backbone','Native','Train w/o Mean','w/o Mean Control'], points, wide=False, numeric_from=1).replace(r'\tabcolsep}{4pt}',r'\tabcolsep}{2pt}'),
     }
 
 
 def complete_method_matrices(primary_directory, gaussian_directory):
     """Compare correction families under the same validation-fitting protocol."""
-    require_complete(gaussian_directory,249)
     stats={(r['backbone'],r['method']):r for r in read(primary_directory/'partial_backbone_statistics.csv')}
-    stats.update({(r['backbone'],r['method']):r for r in read(gaussian_directory/'backbone_statistics.csv')})
-    methods=[m for m in METHODS if m != 'TrainDC16']+['GaussianVariance2P','GaussianAffine4P']
-    labels=[name for m,name in zip(METHODS,HEADINGS) if m != 'TrainDC16']+['Gaussian2P','Gaussian4P']
+    methods=[m for m in METHODS if m != 'TrainDC16']
+    labels=[name for m,name in zip(METHODS,HEADINGS) if m != 'TrainDC16']
     for b in BACKBONES:
         for key in ['n_configurations','state_error_pp_n_configurations']:
             if len({stats[b,m][key] for m in methods})!=1:
-                raise ValueError('Gaussian and primary summary populations differ')
+                raise ValueError('Displayed calibration populations differ')
     distribution=[];reliability=[]
     for metric,label in [('CRPS','CRPS'),('QICE_percent','QICE (pp)')]:
-        distribution.append(r'\multicolumn{8}{l}{'+label+r' $\downarrow$} \\')
+        average = relative_backbone_averages(primary_directory,gaussian_directory,methods,metric)
+        best_average = min(v[0] for v in average.values())
+        distribution.append(r'\multicolumn{9}{l}{'+label+r' $\downarrow$} \\')
         for method,name in zip(methods,labels):
-            distribution.append(' & '.join([name]+[cell(stats[b,method][metric+'_mean'], stats[b,method][metric+'_std'],best_mean(stats,b,method,metric,methods)) for b in BACKBONES])+r' \\')
+            values = [cell(stats[b,method][metric+'_mean'], stats[b,method][metric+'_std'],best_mean(stats,b,method,metric,methods)) for b in BACKBONES]
+            values.append(cell(*average[method],best=math.isclose(average[method][0],best_average,rel_tol=0,abs_tol=1e-12)))
+            prefix = r'\rowcolor{black!8} ' if method == 'DC16' else ''
+            distribution.append(prefix+' & '.join([name]+values)+r' \\')
         distribution.append(r'\midrule')
     for metric,label in [('state_error_pp','State coverage error (pp)'),('BrierMean','Mean Brier score')]:
         reliability.append(r'\multicolumn{8}{l}{'+label+r' $\downarrow$} \\')
         for method,name in zip(methods,labels):
             reliability.append(' & '.join([name]+[cell(stats[b,method][metric+'_mean'], stats[b,method][metric+'_std'],best_mean(stats,b,method,metric,methods)) for b in BACKBONES])+r' \\')
         reliability.append(r'\midrule')
-    common='All corrections use the same validation reservoir. Subscripts give sample SD over three seed averages of configurations. Bold means are best within each backbone and metric. DeepSTUQ uses native flow units; others use model-normalized units.'
+    common='All corrections use the same validation reservoir. Subscripts give sample SD over three run averages of configurations. Bold means are best within each backbone and metric. DeepSTUQ uses original traffic-flow units; others use model-normalized units.'
     header=['Method']+[rf'\shortstack{{{LABELS[b]}\\({VENUES[b]})}}' for b in BACKBONES]
     eligible=['Method']+[rf'\shortstack{{{LABELS[b]}\\({stats[b,"Native"]["state_error_pp_n_configurations"]}/{stats[b,"Native"]["n_configurations"]})}}' for b in BACKBONES]
     return {
-        'full_distribution.tex':table('Validation-fitted calibration methods: distribution scores on paired complete native test iterators. '+common,
-            'tab:full-distribution',header,distribution[:-1],numeric_from=1),
-        'full_reliability.tex':table('Validation-fitted calibration methods: state and event reliability on complete native test iterators. Parentheses give eligible configurations over all configurations. State errors use states with at least 128 coordinates in every seed; Brier scores retain all configurations and average threshold levels 0.8, 0.9, 0.95. '+common,
+        'full_distribution.tex':table('Validation-fitted calibration methods on paired complete native test iterators. All corrections share validation coordinates. Subscripts: sample SD over three run averages; bold: lowest unrounded mean per metric and column. CRPS uses original traffic-flow units for DeepSTUQ and model-normalized units otherwise. Avg. ratio equally averages Native-normalized backbone scores within each run (Native = 1).',
+            'tab:full-distribution',header+[r'\shortstack{Avg. ratio\\$\downarrow$}'],distribution[:-1],numeric_from=1),
+        'full_reliability.tex':table('Validation-fitted calibration methods: state and event reliability on complete native test iterators. Parentheses give eligible configurations over all configurations. State errors use states with at least 128 coordinates in every run; Brier scores retain all configurations and average threshold levels 0.8, 0.9, 0.95. '+common,
             'tab:full-reliability',eligible,reliability[:-1],numeric_from=1)}
 
 
 def temporal_fitting(primary_directory):
-    """Hold DC16 fixed and vary only the temporal fitting segment."""
+    """Hold w/o Mean Control fixed and vary only the temporal fitting segment."""
     stats={(r['backbone'],r['method']):r for r in read(primary_directory/'partial_backbone_statistics.csv')}
     rows=[]
     for metric,label in [('CRPS','CRPS'),('QICE_percent','QICE (pp)'),
                          ('state_error_pp','State coverage error (pp)'),('BrierMean','Mean Brier score')]:
         rows.append(r'\multicolumn{8}{l}{'+label+r' $\downarrow$} \\')
-        for method,name in [('TrainDC16','Train DC16'),('DC16','Val DC16')]:
+        for method,name in [('TrainDC16','Train w/o Mean'),('DC16','w/o Mean Control')]:
             rows.append(' & '.join([name]+[cell(stats[b,method][metric+'_mean'],stats[b,method][metric+'_std'],best_mean(stats,b,method,metric,['TrainDC16','DC16'])) for b in BACKBONES])+r' \\')
         rows.append(r'\midrule')
-    return table('Temporal fitting comparison for DC16 on identical complete native test forecasts. Subscripts give sample SD over three seed averages. State diagnostics and eligible configurations follow Table~\\ref{tab:full-reliability}; other metrics use all configurations. Brier scores average the three thresholds. CRPS uses flow units for DeepSTUQ and model-normalized units otherwise.',
+    return table('Temporal fitting comparison for w/o Mean Control on identical complete native test forecasts. Subscripts give sample SD over three run averages. State diagnostics and eligible configurations follow Table~\\ref{tab:full-reliability}; other metrics use all configurations. Brier scores average the three thresholds. CRPS uses original traffic-flow units for DeepSTUQ and model-normalized units otherwise.',
         'tab:temporal-fitting',['Fitting segment']+[LABELS[b] for b in BACKBONES],rows[:-1],numeric_from=1)
 
 

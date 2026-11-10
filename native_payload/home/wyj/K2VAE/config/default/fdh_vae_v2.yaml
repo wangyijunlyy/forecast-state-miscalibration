@@ -1,0 +1,24 @@
+model:
+  forecaster:
+    class_path: probts.model.forecaster.prob_forecaster.fdh_vae_v2.FDHVAEv2Model
+    init_args:
+      d_model: 128
+      d_ff: 256
+      e_layers: 1
+      dropout: 0.1
+      activation: relu
+      n_heads: 4
+      factor: 3
+      patch_len: 24
+      multistep: true
+      dynamic_dim: 126
+      hidden_layers: 3
+      hidden_dim: 256
+      d_decoder: 256
+      n_bands: 3
+      n_encoder_layers: 2
+      d_spectral_cond: 128
+      beta_band: 0.1
+      beta_gate: 0.05
+      lambda_freq: 0.01
+      sample_schedule: 20
