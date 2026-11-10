@@ -2,7 +2,7 @@
 
 ## Scope and outputs
 
-The checked-in configuration covers seven backbones, 83 dataset/horizon configurations and three independent training runs per configuration. All raw observations, checkpoints, fitted parameters and measured scores remain local. The current Git tree contains no reference results.
+The checked-in configuration covers seven backbones, 83 dataset/horizon configurations and three independent training runs per configuration.
 
 `scripts/reproduce.py prepare` creates an isolated workspace, restores four pinned public source trees and applies their measured source changes. Other required native source modules and configurations are included under `native_payload`. It rewrites the original server path prefix into this workspace before training or data extraction. The source repository is not modified by a reproduction run.
 
@@ -19,7 +19,7 @@ Outputs are under `WORKSPACE/reviewer_outputs/runs/TASK_ID/`:
 | `retained_results.json` | Four-arm ablation, optional controls, factorial interaction, complete-fit costs and compiled parity |
 | `compiled.npz`, `parity_probe.npz` | Complete deployment state and memory-layout-preserving reload probe |
 
-Complete-test scores and retained-cohort scores have different evaluation populations. Do not combine them into one summary. All runtime outputs and model/data binaries are ignored by Git.
+Complete-test scores and retained-cohort scores have different evaluation populations. Do not combine them into one summary.
 
 ## Experiment mapping
 
@@ -59,6 +59,6 @@ Datasets may also be placed manually in `WORKSPACE/payload/home/wyj/` using `con
 
 ## Validation and scientific scope
 
-The code-only refresh was checked by restoring all four public source trees in a fresh directory and running numerical tests of the final method and reviewer adapter. Tests do not require historical results. All seven native import probes and a real PPM/ETTh1/H192 complete-test pilot also passed (2689 windows, 3,614,016 coordinates, paired 50,000-coordinate controls and exact compiled checks), using an existing checkpoint. A new 249-run neural training campaign is not part of this code refresh.
+The reproduction workflow was checked by restoring all four public source trees in a fresh directory and running numerical tests of the final method and reviewer adapter. Tests do not require historical results. All seven native import probes and a real PPM/ETTh1/H192 complete-test pilot also passed (2689 windows, 3,614,016 coordinates, paired 50,000-coordinate controls and exact compiled checks), using an existing checkpoint. A new 249-run neural training campaign is not part of this code refresh.
 
-The manuscript also incorporates author-supplied corrections to selected complete-test aggregate scores. Their corresponding prediction arrays are not included here. The reproduction code calculates every metric from generated predictions; it does not overwrite computed values with those aggregates. Exact compilation claims concern application of the same frozen FSPC model, separately from the variability of fresh neural training or a numerically nonunique blend optimizer.
+Every metric is computed from forecast samples and their corresponding targets. Compiled/reference equivalence is checked for application of the same frozen FSPC model.

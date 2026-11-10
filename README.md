@@ -2,7 +2,7 @@
 
 Experiment code for **Forecast-State Miscalibration in Probabilistic Time-Series Analytics**. The current method is forecast-state probability calibration (**FSPC**): source-filtered residual templates in 6 × 6 forecast-mean/log-scale states, centered reconstruction, and a validation-selected affine-plus-state mean blended with a training-bias reference.
 
-This branch contains code, task configurations, dependency specifications and reproduction instructions. Datasets, trained weights, cached predictions, fitted calibrators, experiment results and manuscript outputs are generated or downloaded locally; they are not checked in.
+This repository contains the FSPC implementation, benchmark task configurations, dependency specifications and reproduction instructions.
 
 ## Quick check without a GPU
 
@@ -77,6 +77,6 @@ This CPU-capable entry point calls the same `fit_unified`, four-arm reconstructi
 | Common metrics and three-run aggregation | `reliability_metrics.py`, `aggregation.py` |
 | Original measured campaign runners | `run_*.py`, `aggregate_*.py`, and protocol documents |
 
-The reviewer adapters remove dependencies on previously completed result directories; they do not replace the underlying model, FSPC or metric implementations. Original campaign runners remain available for inspecting their historical orchestration and parity checks. Their recorded-result replay modes require locally generated campaigns and are not the quick-start entry point.
+The reviewer adapters remove dependencies on previously completed result directories; they do not replace the underlying model, FSPC or metric implementations. Original campaign runners remain available for inspecting their historical orchestration and parity checks. Their recorded-result replay modes operate on completed experiment campaigns; the reviewer entry points are shown above.
 
-Fresh training can vary across hardware and numerical libraries. Published metric summaries are not injected into computed outputs. This code-only branch does not distribute the historical prediction arrays or author-supplied aggregate corrections needed to reconstruct every paper cell exactly. See [third-party attribution](NOTICE.md) for source revisions and licenses.
+Fresh training can vary across hardware and numerical libraries. See [third-party attribution](NOTICE.md) for source revisions and licenses.

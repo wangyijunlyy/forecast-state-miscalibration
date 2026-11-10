@@ -54,7 +54,7 @@ class UnifiedTests(unittest.TestCase):
    with np.load(path) as d:self.assertEqual(d['x'][0],7)
 
  def test_external_table_rounding_matches_canonical_half_up(self):
-  # The code-only artifact retains the canonical renderer, not manuscript files.
+  # Use the shared canonical table formatter.
   from render_tables import cell
   self.assertEqual(cell(2.9625,.0045,False),r'\stat{2.963}{0.005}')
 

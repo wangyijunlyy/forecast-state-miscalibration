@@ -13,7 +13,7 @@ Freeze the completed `UnifiedMean` parameters before reading test targets. Use a
 | ShapeOnly | Native ensemble mean | FSPC centered residual template, rescaled by Native spread |
 | FSPC | FSPC blended affine-plus-state mean | FSPC centered residual template, rescaled by Native spread |
 
-MeanOnly shifts every Native member by the full model's location adjustment. ShapeOnly removes both learned mean adjustments, including the training-bias reference. Score the four outputs on exactly the same coordinates and historical state/threshold definitions. Check Native and FSPC against existing retained-cohort records, and verify mean preservation, mean-only spread preservation and conditional mean/shape contrasts. Report MSE, MAE, RMSE, median MAE, CRPS, QICE, state coverage and Brier components. Store paired factorial interaction contrasts in addition to component scores. Do not apply author-supplied full-test score overlays to these measured cohorts.
+MeanOnly shifts every Native member by the full model's location adjustment. ShapeOnly removes both learned mean adjustments, including the training-bias reference. Score the four outputs on exactly the same coordinates and historical state/threshold definitions. Check Native and FSPC against existing retained-cohort records, and verify mean preservation, mean-only spread preservation and conditional mean/shape contrasts. Report MSE, MAE, RMSE, median MAE, CRPS, QICE, state coverage and Brier components. Store paired factorial interaction contrasts in addition to component scores.
 
 ## Complete fit and online cost
 

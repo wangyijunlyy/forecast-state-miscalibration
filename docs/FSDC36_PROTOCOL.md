@@ -28,4 +28,4 @@ The 36-state default was adopted following the existing descriptive sensitivity 
 
 Within a run, average configurations per backbone before dividing by the corresponding Native backbone mean. Average those ratios equally across seven backbones, then report the mean and sample SD across three runs. Do not average absolute scores across backbones with different units.
 
-`rebuild_analysis.py --fsdc36-records results/fsdc36` invokes complete-suite auditing and table rendering. See `README.md` for commands from the workspace root, including figure preparation, source auditing and PDF builds. The local analysis supplement includes numeric records and measured figure inputs; it does not include neural weights or claim another complete training run.
+`rebuild_analysis.py --fsdc36-records results/fsdc36` invokes complete-suite auditing and table rendering. See `README.md` for commands from the workspace root, including figure preparation, source auditing and PDF builds.

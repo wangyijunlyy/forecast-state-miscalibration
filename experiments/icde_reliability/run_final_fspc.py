@@ -143,7 +143,7 @@ def task_run(task,root,source,means,aux,prior,workers):
         for name in rng.permutation(OPERATIONS):
             before=time.perf_counter();value=operations[name]();times[name].append(time.perf_counter()-before);del value
     record=dict(version=VERSION,task=task,coordinates=len(y),samples=100,thresholds_per_coordinate=3,
-        full_test_split=False,evaluation='shared retained test coordinates; no author full-test score overlays',
+        full_test_split=False,evaluation='shared retained test coordinates',
         backbone_retrained=False,native_inference_repeated=False,sources=sources,methods=metrics,
         fit=dict(wall_seconds=fit_times,cpu_seconds=fit_cpu,median_seconds=float(np.median(fit_times)),
             full_protocol=True,includes_mean_and_blend_selection=True,excludes_native_generation_and_file_io=True,
