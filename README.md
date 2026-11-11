@@ -4,6 +4,10 @@ Experiment code for **Forecast-State Miscalibration in Probabilistic Time-Series
 
 This repository contains the FSPC implementation, benchmark task configurations, dependency specifications and reproduction instructions.
 
+## Supplementary material
+
+The [supplementary PDF](docs/supplement.pdf) contains detailed results, additional figures and the experimental protocol (47 pages).
+
 ## Quick check without a GPU
 
 Use Python 3.10 (the native experiments used 3.10.19):
